@@ -34,7 +34,7 @@ export default async function (pi: ExtensionAPI) {
   const file = join(getAgentDir(), "pi-account-manager", "accounts.json");
   let accounts: Account[] = [];
   let loadError: string | undefined;
-  const warned = false;
+  let warned = false;
 
   type Bases = (id: ProviderId) => Provider | undefined;
 
@@ -73,6 +73,28 @@ export default async function (pi: ExtensionAPI) {
     } catch (e) {
       unloadAll(e);
     }
+  });
+
+  // Spec §8: once-per-process extra-usage warning for authenticated anthropic aliases (TUI only).
+  pi.on("model_select", (event, ctx) => {
+    if (warned || ctx.mode !== "tui") return;
+    const account = accounts.find(
+      (a) => a.provider === "anthropic" && aliasId(a) === event.model.provider,
+    );
+    if (!account) return;
+    if (authStatusOf(ctx, event.model.provider) !== "authenticated") return;
+    let enabled = true;
+    try {
+      const settings = SettingsManager.create(ctx.cwd, undefined, {
+        projectTrusted: ctx.isProjectTrusted(),
+      });
+      enabled = settings.getWarnings().anthropicExtraUsage !== false;
+    } catch {
+      enabled = true; // failure to read the setting = warning enabled (spec §8)
+    }
+    if (!enabled) return;
+    warned = true;
+    ctx.ui.notify(ANTHROPIC_WARNING, "warning");
   });
 
   function authStatusOf(

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Account, serializeState } from "../src/core.js";
-import extension from "../src/index.js";
+import extension, { ANTHROPIC_WARNING } from "../src/index.js";
 import { loadAccounts as loadStore } from "../src/store.js";
 import { type AuthStatus, makeFakeCtx, makeFakePi } from "./fakes.js";
 
@@ -342,5 +342,72 @@ describe("/account remove", () => {
     await fake.account("remove anthropic@work", ctx);
     expect(notifications.at(-1)!.message).toMatch(/\/reload/);
     expect(fake.providers.has("anthropic@work")).toBe(true); // runtime unchanged too
+  });
+});
+
+describe("anthropic warning", () => {
+  const warnCtx = (over: Parameters<typeof makeFakeCtx>[0] = {}) =>
+    makeFakeCtx({
+      cwd: agentDir, // harmless cwd; settings read targets PI_CODING_AGENT_DIR settings.json
+      authStatus: new Map<string, AuthStatus>([["anthropic@work", true]]),
+      ...over,
+    });
+  const model = { provider: "anthropic@work", id: "claude-x" };
+  const setup = async () => {
+    await seed([work]);
+    const fake = makeFakePi();
+    await extension(fake.pi);
+    return fake;
+  };
+
+  it("warns once per process on select, with the exact spec text", async () => {
+    const fake = await setup();
+    const { ctx, notifications } = warnCtx();
+    await fake.emit("model_select", { model, source: "set" }, ctx);
+    await fake.emit("model_select", { model, source: "set" }, ctx);
+    const warnings = notifications.filter((n) => n.message === ANTHROPIC_WARNING);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].type).toBe("warning");
+  });
+
+  it("also warns on session restore", async () => {
+    const fake = await setup();
+    const { ctx, notifications } = warnCtx();
+    await fake.emit("model_select", { model, source: "restore" }, ctx);
+    expect(notifications.some((n) => n.message === ANTHROPIC_WARNING)).toBe(true);
+  });
+
+  it("ignores non-alias, non-anthropic, unauthenticated, and non-TUI selections", async () => {
+    const fake = await setup();
+    for (const [m, over] of [
+      [{ provider: "anthropic", id: "claude-x" }, {}],                         // native provider
+      [{ provider: "openai-codex@work", id: "gpt" }, {}],                      // wrong provider family
+      [model, { authStatus: new Map<string, AuthStatus>([["anthropic@work", false]]) }], // not authenticated
+      [model, { mode: "rpc" }],                                                // not TUI
+    ] as const) {
+      const { ctx, notifications } = warnCtx(over as never);
+      await fake.emit("model_select", { model: m, source: "set" }, ctx);
+      expect(notifications).toHaveLength(0);
+    }
+  });
+
+  it("suppresses when warnings.anthropicExtraUsage is explicitly false in merged settings", async () => {
+    await writeFile(
+      join(agentDir, "settings.json"),
+      JSON.stringify({ warnings: { anthropicExtraUsage: false } }),
+      "utf8",
+    );
+    const fake = await setup();
+    const { ctx, notifications } = warnCtx();
+    await fake.emit("model_select", { model, source: "set" }, ctx);
+    expect(notifications).toHaveLength(0);
+  });
+
+  it("treats a settings read failure as warning enabled", async () => {
+    await writeFile(join(agentDir, "settings.json"), "{corrupt", "utf8");
+    const fake = await setup();
+    const { ctx, notifications } = warnCtx();
+    await fake.emit("model_select", { model, source: "set" }, ctx);
+    expect(notifications.some((n) => n.message === ANTHROPIC_WARNING)).toBe(true);
   });
 });

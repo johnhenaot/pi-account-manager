@@ -152,3 +152,102 @@ describe("/account list", () => {
     expect(notifications[0].message).toContain("status unavailable");
   });
 });
+
+describe("/account add", () => {
+  const addCtx = (over: Parameters<typeof makeFakeCtx>[0] = {}) =>
+    makeFakeCtx({ registry: effectiveRegistry(), ...over });
+
+  it("adds with explicit name: persists, registers, prefills empty editor", async () => {
+    const fake = makeFakePi();
+    await extension(fake.pi);
+    const { ctx, getEditor } = addCtx({ selections: ["Anthropic"] });
+    await fake.account("add Work", ctx); // normalized to "work"
+    expect(fake.providers.has("anthropic@work")).toBe(true);
+    expect(getEditor()).toBe("/login anthropic@work");
+    const list = makeFakeCtx();
+    await fake.account("list", list.ctx);
+    expect(list.notifications[0].message).toContain("anthropic@work");
+  });
+
+  it("preserves a non-empty editor and notifies with the exact login command", async () => {
+    const fake = makeFakePi();
+    await extension(fake.pi);
+    const { ctx, notifications, getEditor } = addCtx({
+      selections: ["OpenAI Codex"], editorText: "draft text",
+    });
+    await fake.account("add personal", ctx);
+    expect(getEditor()).toBe("draft text");
+    expect(notifications.at(-1)!.message).toContain("/login openai-codex@personal");
+  });
+
+  it("prompts for the name when omitted; cancelling either prompt changes nothing", async () => {
+    const fake = makeFakePi();
+    await extension(fake.pi);
+    const c1 = addCtx({ inputs: [undefined] }); // cancel name prompt
+    await fake.account("add", c1.ctx);
+    const c2 = addCtx({ inputs: ["work"], selections: [undefined] }); // cancel provider prompt
+    await fake.account("add", c2.ctx);
+    expect(fake.providers.size).toBe(0);
+    expect(await loadAccountsFile()).toEqual([]);
+  });
+
+  it("rejects invalid names", async () => {
+    const fake = makeFakePi();
+    await extension(fake.pi);
+    const { ctx, notifications } = addCtx();
+    await fake.account("add -bad-", ctx);
+    expect(notifications[0].type).toBe("error");
+    expect(fake.providers.size).toBe(0);
+  });
+
+  it("rejects an existing (provider,name) and suggests /login for reauth", async () => {
+    await seed([work]);
+    const fake = makeFakePi();
+    await extension(fake.pi);
+    const { ctx, notifications } = addCtx({ selections: ["Anthropic"] });
+    await fake.account("add work", ctx);
+    expect(notifications[0].message).toContain("/login anthropic@work");
+    expect(notifications[0].type).toBe("error");
+  });
+
+  it("fails cleanly when the alias id is already owned by another provider", async () => {
+    const fake = makeFakePi();
+    await extension(fake.pi);
+    const registry = effectiveRegistry();
+    registry.set("anthropic@work", registry.get("anthropic")!); // someone owns the id
+    const { ctx, notifications } = addCtx({ registry, selections: ["Anthropic"] });
+    await fake.account("add work", ctx);
+    expect(notifications[0].type).toBe("error");
+    expect(await loadAccountsFile()).toEqual([]); // nothing persisted
+  });
+
+  it("fails cleanly when the native provider is unavailable", async () => {
+    const fake = makeFakePi();
+    await extension(fake.pi);
+    const { ctx, notifications } = addCtx({ registry: new Map(), selections: ["Anthropic"] });
+    await fake.account("add work", ctx);
+    expect(notifications[0].type).toBe("error");
+    expect(fake.providers.size).toBe(0);
+    expect(await loadAccountsFile()).toEqual([]);
+  });
+
+  it("rolls back persistence when registration throws", async () => {
+    const fake = makeFakePi();
+    await extension(fake.pi);
+    fake.pi.registerProvider.mockImplementationOnce(() => { throw new Error("boom"); });
+    const { ctx, notifications } = addCtx({ selections: ["Anthropic"] });
+    await fake.account("add work", ctx);
+    expect(notifications.at(-1)!.type).toBe("error");
+    expect(await loadAccountsFile()).toEqual([]); // rolled back
+  });
+
+  it("aborts with /reload when disk state diverged (stale snapshot)", async () => {
+    const fake = makeFakePi();
+    await extension(fake.pi);
+    await seed([personal]); // external process wrote after our load
+    const { ctx, notifications } = addCtx({ selections: ["Anthropic"] });
+    await fake.account("add work", ctx);
+    expect(notifications.at(-1)!.message).toMatch(/\/reload/);
+    expect((await loadAccountsFile()).map((a) => a.name)).toEqual(["personal"]); // untouched
+  });
+});

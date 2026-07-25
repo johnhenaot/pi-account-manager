@@ -133,7 +133,63 @@ export default async function (pi: ExtensionAPI) {
   });
 
   async function add(rawName: string | undefined, ctx: ExtensionCommandContext): Promise<void> {
-    ctx.ui.notify("add: implemented in Task 7", "error"); // replaced in Task 7
+    const input = rawName ?? (await ctx.ui.input("Account name", "e.g. work"));
+    if (input === undefined) return; // cancelled: no state change
+    const name = normalizeName(input);
+    if (!isValidName(name)) {
+      ctx.ui.notify(
+        `Invalid account name ${JSON.stringify(input)}. Use 1-32 of a-z 0-9 _ - starting with a letter or digit.`,
+        "error",
+      );
+      return;
+    }
+    const label = await ctx.ui.select("Provider", Object.values(PROVIDERS));
+    if (label === undefined) return; // cancelled: no state change
+    const provider = (Object.keys(PROVIDERS) as ProviderId[]).find((p) => PROVIDERS[p] === label);
+    if (!provider) return;
+    const account: Account = { provider, name };
+    const id = aliasId(account);
+    if (accounts.some((a) => aliasId(a) === id)) {
+      ctx.ui.notify(`${id} already exists. To reauthenticate, run /login ${id}.`, "error");
+      return;
+    }
+    // Spec §3.2 step 5: effective provider + OAuth flow + catalog exist, alias id unowned,
+    // and an OAuth-only alias is constructible (makeAlias enforces all of that).
+    let alias: Provider;
+    try {
+      if (ctx.modelRegistry.getProvider(id)) throw new Error(`provider id "${id}" is already in use`);
+      alias = makeAlias(ctx.modelRegistry.getProvider(provider), account);
+    } catch (e) {
+      ctx.ui.notify(`Cannot add ${id}: ${msg(e)}`, "error");
+      return;
+    }
+    // Spec §3.2 step 6: persist + register all-or-nothing.
+    let next: Account[];
+    try {
+      next = await mutateAccounts(file, accounts, (cur) => [...cur, account]);
+    } catch (e) {
+      ctx.ui.notify(`Add failed: ${msg(e)}`, "error");
+      return;
+    }
+    try {
+      pi.registerProvider(alias);
+    } catch (e) {
+      try {
+        await mutateAccounts(file, next, (cur) => cur.filter((a) => aliasId(a) !== id));
+      } catch {
+        /* rollback is best effort; disk wins over runtime on next load */
+      }
+      ctx.ui.notify(`Add failed: ${msg(e)}`, "error");
+      return;
+    }
+    accounts = next;
+    // Spec §3.2 step 7: prepare /login without submitting it.
+    const login = `/login ${id}`;
+    if (ctx.ui.getEditorText() === "") {
+      ctx.ui.setEditorText(login);
+    } else {
+      ctx.ui.notify(`Added ${id}. Run ${login} to authenticate.`, "info");
+    }
   }
 
   async function remove(target: string | undefined, ctx: ExtensionCommandContext): Promise<void> {

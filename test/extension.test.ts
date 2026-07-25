@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Account, serializeState } from "../src/core.js";
 import extension from "../src/index.js";
 import { loadAccounts as loadStore } from "../src/store.js";
-import { makeFakeCtx, makeFakePi } from "./fakes.js";
+import { type AuthStatus, makeFakeCtx, makeFakePi } from "./fakes.js";
 
 let agentDir: string;
 const work: Account = { provider: "anthropic", name: "work" };
@@ -94,5 +94,61 @@ describe("bootstrap", () => {
     const list = makeFakeCtx();
     await fake.account("list", list.ctx);
     expect(list.notifications[0].type).toBe("error");
+  });
+});
+
+describe("/account list", () => {
+  it("refuses non-TUI modes without state change", async () => {
+    await seed([work]);
+    const fake = makeFakePi();
+    await extension(fake.pi);
+    for (const mode of ["rpc", "json", "print"]) {
+      const { ctx, notifications } = makeFakeCtx({ mode });
+      await fake.account("", ctx);
+      expect(notifications[0].message).toMatch(/TUI/);
+      expect(notifications[0].type).toBe("error");
+    }
+  });
+
+  it("shows usage on unknown subcommand or excess args", async () => {
+    const fake = makeFakePi();
+    await extension(fake.pi);
+    for (const args of ["bogus", "list extra", "add a b"]) {
+      const { ctx, notifications } = makeFakeCtx();
+      await fake.account(args, ctx);
+      expect(notifications[0].message).toMatch(/^Usage:/);
+    }
+  });
+
+  it("lists rows ordered by provider display name then name, with one status each", async () => {
+    await seed([personal, work, { provider: "anthropic", name: "alt" }]);
+    const fake = makeFakePi();
+    await extension(fake.pi);
+    const { ctx, notifications } = makeFakeCtx({
+      authStatus: new Map<string, AuthStatus>([
+        ["anthropic@alt", true],
+        ["anthropic@work", false],
+        ["openai-codex@personal", "throw"],
+      ]),
+    });
+    await fake.account("list", ctx);
+    const lines = notifications[0].message.split("\n");
+    expect(lines[0]).toContain("anthropic@alt");
+    expect(lines[0]).toContain("authenticated");
+    expect(lines[1]).toContain("anthropic@work");
+    expect(lines[1]).toContain("not authenticated");
+    expect(lines[2]).toContain("openai-codex@personal");
+    expect(lines[2]).toContain("status unavailable");
+  });
+
+  it("indeterminate status lookup shows status unavailable", async () => {
+    await seed([work]);
+    const fake = makeFakePi();
+    await extension(fake.pi);
+    const { ctx, notifications } = makeFakeCtx({
+      authStatus: new Map<string, AuthStatus>([["anthropic@work", "indeterminate"]]),
+    });
+    await fake.account("", ctx);
+    expect(notifications[0].message).toContain("status unavailable");
   });
 });

@@ -35,13 +35,16 @@ export function makeFakePi() {
   };
 }
 
+/** Mixed-value Map literals need this explicitly; TS otherwise infers Map<string, boolean>. */
+export type AuthStatus = boolean | "throw" | "indeterminate";
+
 export interface FakeCtxOptions {
   mode?: string;
   cwd?: string;
   /** provider id -> Provider for modelRegistry.getProvider */
   registry?: Map<string, Provider>;
   /** provider id -> boolean (configured) | "throw" | "indeterminate" */
-  authStatus?: Map<string, boolean | "throw" | "indeterminate">;
+  authStatus?: Map<string, AuthStatus>;
   /** scripted answers for ui.input then ui.select, consumed in order */
   inputs?: (string | undefined)[];
   selections?: (string | undefined)[];

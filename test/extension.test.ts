@@ -172,7 +172,9 @@ describe("/account add", () => {
 	it("adds with explicit name: persists, registers, prefills empty editor", async () => {
 		const fake = makeFakePi();
 		await extension(fake.pi);
-		const { ctx, getEditor, notifications } = addCtx({ selections: ["Anthropic"] });
+		const { ctx, getEditor, notifications } = addCtx({
+			selections: ["Anthropic"],
+		});
 		await fake.account("add Work", ctx); // normalized to "work"
 		expect(fake.providers.has("anthropic@work")).toBe(true);
 		expect(getEditor()).toBe("/login anthropic@work");

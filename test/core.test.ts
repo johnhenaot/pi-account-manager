@@ -53,3 +53,91 @@ describe("sameAccounts", () => {
     expect(sameAccounts(x, x.slice(1))).toBe(false);
   });
 });
+
+import {
+  parseAccountArgs, parseState, resolveRemoveTarget, serializeState,
+} from "../src/core.js";
+
+describe("parseState", () => {
+  it("round-trips and canonicalizes", () => {
+    const accounts: Account[] = [
+      { provider: "openai-codex", name: "a" },
+      { provider: "anthropic", name: "b" },
+    ];
+    const parsed = parseState(serializeState(accounts));
+    expect(parsed.map(aliasId)).toEqual(["anthropic@b", "openai-codex@a"]);
+    expect(JSON.parse(serializeState(accounts))).toEqual({
+      version: 1,
+      accounts: [
+        { provider: "anthropic", name: "b" },
+        { provider: "openai-codex", name: "a" },
+      ],
+    });
+  });
+  it("accepts the empty set", () => {
+    expect(parseState('{"version":1,"accounts":[]}')).toEqual([]);
+  });
+  it("rejects every malformed shape with an error (no partial recovery)", () => {
+    const bad = [
+      "not json",
+      "[]",
+      '{"version":2,"accounts":[]}',
+      '{"version":1}',
+      '{"accounts":[]}',
+      '{"version":1,"accounts":[],"extra":1}',
+      '{"version":1,"accounts":[{"provider":"anthropic"}]}',
+      '{"version":1,"accounts":[{"provider":"anthropic","name":"a","x":1}]}',
+      '{"version":1,"accounts":[{"provider":"openai","name":"a"}]}',
+      '{"version":1,"accounts":[{"provider":"anthropic","name":"Bad Name"}]}',
+      '{"version":1,"accounts":[{"provider":"anthropic","name":"a"},{"provider":"anthropic","name":"a"}]}',
+    ];
+    for (const json of bad) expect(() => parseState(json), json).toThrow();
+  });
+});
+
+describe("parseAccountArgs", () => {
+  it("parses every documented form", () => {
+    expect(parseAccountArgs("")).toEqual({ kind: "list" });
+    expect(parseAccountArgs("  ")).toEqual({ kind: "list" });
+    expect(parseAccountArgs("list")).toEqual({ kind: "list" });
+    expect(parseAccountArgs("add")).toEqual({ kind: "add", name: undefined });
+    expect(parseAccountArgs("add work")).toEqual({ kind: "add", name: "work" });
+    expect(parseAccountArgs("remove")).toEqual({ kind: "remove", target: undefined });
+    expect(parseAccountArgs("remove anthropic@work")).toEqual({ kind: "remove", target: "anthropic@work" });
+  });
+  it("rejects unknown subcommands and excess arguments", () => {
+    for (const s of ["nope", "list extra", "add a b", "remove a b", "add a b c"]) {
+      expect(parseAccountArgs(s)).toEqual({ kind: "usage" });
+    }
+  });
+});
+
+describe("resolveRemoveTarget", () => {
+  const accounts: Account[] = [
+    { provider: "anthropic", name: "work" },
+    { provider: "openai-codex", name: "work" },
+    { provider: "anthropic", name: "solo" },
+  ];
+  it("prefers exact case-sensitive alias id", () => {
+    expect(resolveRemoveTarget("anthropic@work", accounts)).toEqual({
+      kind: "account", account: { provider: "anthropic", name: "work" },
+    });
+  });
+  it("does NOT alias-match case-insensitively (falls through to name matching)", () => {
+    expect(resolveRemoveTarget("Anthropic@work", accounts).kind).toBe("none");
+  });
+  it("normalizes as name: one match", () => {
+    expect(resolveRemoveTarget("  SOLO ", accounts)).toEqual({
+      kind: "account", account: { provider: "anthropic", name: "solo" },
+    });
+  });
+  it("normalizes as name: two matches -> choose", () => {
+    const r = resolveRemoveTarget("work", accounts);
+    expect(r.kind).toBe("choose");
+    if (r.kind === "choose") expect(r.matches).toHaveLength(2);
+  });
+  it("no match or invalid input -> none", () => {
+    expect(resolveRemoveTarget("ghost", accounts).kind).toBe("none");
+    expect(resolveRemoveTarget("bad name!", accounts).kind).toBe("none");
+  });
+});

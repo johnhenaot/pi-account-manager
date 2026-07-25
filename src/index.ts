@@ -192,7 +192,70 @@ export default async function (pi: ExtensionAPI) {
     }
   }
 
+  async function pick(ctx: ExtensionCommandContext, from: Account[]): Promise<Account | undefined> {
+    const sorted = sortAccounts(from);
+    const labels = sorted.map((a) => `${aliasDisplayName(a)} — ${aliasId(a)}`);
+    const choice = await ctx.ui.select("Remove which account?", labels);
+    if (choice === undefined) return undefined; // cancelled
+    return sorted[labels.indexOf(choice)];
+  }
+
   async function remove(target: string | undefined, ctx: ExtensionCommandContext): Promise<void> {
-    ctx.ui.notify("remove: implemented in Task 8", "error"); // replaced in Task 8
+    let account: Account | undefined;
+    if (target === undefined) {
+      if (accounts.length === 0) {
+        ctx.ui.notify("No named accounts. Use /account add NAME.", "info");
+        return;
+      }
+      account = await pick(ctx, accounts);
+    } else {
+      const res = resolveRemoveTarget(target, accounts);
+      if (res.kind === "none") {
+        ctx.ui.notify(`No account matches ${JSON.stringify(target)}.`, "error");
+        return;
+      }
+      account = res.kind === "account" ? res.account : await pick(ctx, res.matches);
+    }
+    if (!account) return; // cancelled: no state change
+    const id = aliasId(account);
+
+    // Spec §3.3: fail closed on status; refuse authenticated and active-model accounts.
+    const status = authStatusOf(ctx, id);
+    if (status === "status unavailable") {
+      ctx.ui.notify(`Cannot verify authentication status for ${id}; not removing.`, "error");
+      return;
+    }
+    const refusals: string[] = [];
+    if (status === "authenticated") refusals.push(`${id} is authenticated. Run /logout first.`);
+    if (ctx.model?.provider === id)
+      refusals.push(`${id} is the active model's account. Run /model to switch first.`);
+    if (refusals.length > 0) {
+      ctx.ui.notify(refusals.join("\n"), "error");
+      return;
+    }
+
+    let next: Account[];
+    try {
+      next = await mutateAccounts(file, accounts, (cur) => cur.filter((a) => aliasId(a) !== id));
+    } catch (e) {
+      ctx.ui.notify(`Remove failed: ${msg(e)}`, "error");
+      return;
+    }
+    try {
+      pi.unregisterProvider(id);
+    } catch (e) {
+      try {
+        await mutateAccounts(file, next, (cur) => [...cur, account]);
+      } catch {
+        /* rollback is best effort; disk wins over runtime on next load */
+      }
+      ctx.ui.notify(`Remove failed: ${msg(e)}`, "error");
+      return;
+    }
+    accounts = next;
+    ctx.ui.notify(
+      `Removed ${id}. Credentials for ${id} are untouched; use /login ${id} if you re-add it.`,
+      "info",
+    );
   }
 }

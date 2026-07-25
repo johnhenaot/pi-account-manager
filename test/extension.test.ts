@@ -251,3 +251,96 @@ describe("/account add", () => {
     expect((await loadAccountsFile()).map((a) => a.name)).toEqual(["personal"]); // untouched
   });
 });
+
+describe("/account remove", () => {
+  const rmCtx = (over: Parameters<typeof makeFakeCtx>[0] = {}) =>
+    makeFakeCtx({
+      registry: effectiveRegistry(),
+      authStatus: new Map<string, AuthStatus>([
+        ["anthropic@work", false],
+        ["openai-codex@personal", false],
+        ["openai-codex@work", false],
+      ]),
+      ...over,
+    });
+  const setup = async (accounts: Account[]) => {
+    await seed(accounts);
+    const fake = makeFakePi();
+    await extension(fake.pi);
+    return fake;
+  };
+
+  it("removes by exact alias id: unregisters and forgets", async () => {
+    const fake = await setup([work, personal]);
+    const { ctx, notifications } = rmCtx();
+    await fake.account("remove anthropic@work", ctx);
+    expect(fake.providers.has("anthropic@work")).toBe(false);
+    expect((await loadAccountsFile()).map((a) => a.name)).toEqual(["personal"]);
+    expect(notifications.at(-1)!.message).toContain("anthropic@work");
+  });
+
+  it("no argument: selector over all accounts; cancellation changes nothing", async () => {
+    const fake = await setup([work, personal]);
+    const cancel = rmCtx({ selections: [undefined] });
+    await fake.account("remove", cancel.ctx);
+    expect((await loadAccountsFile()).length).toBe(2);
+    const pickIt = rmCtx({ selections: ["Anthropic (work) — anthropic@work"] });
+    await fake.account("remove", pickIt.ctx);
+    expect((await loadAccountsFile()).map((a) => a.name)).toEqual(["personal"]);
+  });
+
+  it("one name match removes; two matches shows selector of those two", async () => {
+    const fake = await setup([work, { provider: "openai-codex", name: "work" }]);
+    const { ctx } = rmCtx({ selections: ["OpenAI Codex (work) — openai-codex@work"] });
+    await fake.account("remove WORK", ctx); // normalized; 2 matches -> selector
+    expect((await loadAccountsFile()).map(({ provider }) => provider)).toEqual(["anthropic"]);
+  });
+
+  it("no match makes no change", async () => {
+    const fake = await setup([work]);
+    const { ctx, notifications } = rmCtx();
+    await fake.account("remove ghost", ctx);
+    expect(notifications[0].type).toBe("error");
+    expect((await loadAccountsFile()).length).toBe(1);
+  });
+
+  it("fails closed when auth status is unavailable", async () => {
+    const fake = await setup([work]);
+    const { ctx, notifications } = rmCtx({ authStatus: new Map<string, AuthStatus>([["anthropic@work", "throw"]]) });
+    await fake.account("remove anthropic@work", ctx);
+    expect(notifications[0].type).toBe("error");
+    expect((await loadAccountsFile()).length).toBe(1);
+  });
+
+  it("refuses an authenticated account, instructing /logout", async () => {
+    const fake = await setup([work]);
+    const { ctx, notifications } = rmCtx({ authStatus: new Map<string, AuthStatus>([["anthropic@work", true]]) });
+    await fake.account("remove anthropic@work", ctx);
+    expect(notifications[0].message).toContain("/logout");
+    expect((await loadAccountsFile()).length).toBe(1);
+  });
+
+  it("refuses the active model's account, instructing /model — both messages when both apply", async () => {
+    const fake = await setup([work]);
+    const active = rmCtx({ activeModelProvider: "anthropic@work" });
+    await fake.account("remove anthropic@work", active.ctx);
+    expect(active.notifications[0].message).toContain("/model");
+    const both = rmCtx({
+      authStatus: new Map<string, AuthStatus>([["anthropic@work", true]]),
+      activeModelProvider: "anthropic@work",
+    });
+    await fake.account("remove anthropic@work", both.ctx);
+    expect(both.notifications[0].message).toContain("/logout");
+    expect(both.notifications[0].message).toContain("/model");
+    expect((await loadAccountsFile()).length).toBe(1);
+  });
+
+  it("aborts with /reload when the target disappeared from disk", async () => {
+    const fake = await setup([work]);
+    await seed([]); // external removal
+    const { ctx, notifications } = rmCtx();
+    await fake.account("remove anthropic@work", ctx);
+    expect(notifications.at(-1)!.message).toMatch(/\/reload/);
+    expect(fake.providers.has("anthropic@work")).toBe(true); // runtime unchanged too
+  });
+});

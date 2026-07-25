@@ -2,3 +2,6 @@
 .DS_Store
 .pi-subagents/artifacts/
 .worktrees/
+
+# npm
+node_modules/

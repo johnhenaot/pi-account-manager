@@ -158,24 +158,28 @@ export default async function (pi: ExtensionAPI) {
 		}
 
 		if (!loadError && snapshot.length > 0) {
-			const releaseOwned = (owned: Map<string, Provider>) => {
-				for (const [id, provider] of owned) if (stillOurs(ctx.modelRegistry, id, provider)) pi.unregisterProvider(id);
+			/** Single exit for both giving-up paths, so neither can forget half the cleanup. */
+			const abandon = async (owned: Map<string, Provider>, error: unknown) => {
+				for (const [id, provider] of owned) {
+					if (stillOurs(ctx.modelRegistry, id, provider)) pi.unregisterProvider(id);
+				}
+				// Before fail(), which clears the snapshot these IDs are derived from.
+				await Promise.all(snapshot.map((account) => releaseDefaultModel(accountId(account))));
+				fail(error);
 			};
+
 			const taken = snapshot
 				.map(accountId)
 				.filter((id) => !stillOurs(ctx.modelRegistry, id, registered.get(id)))
 				.filter((id) => ctx.modelRegistry.getProvider(id) !== undefined);
 			if (taken.length > 0) {
-				releaseOwned(registered);
-				await Promise.all(snapshot.map((account) => releaseDefaultModel(accountId(account))));
-				fail(new Error(`provider ID "${taken[0]}" is already in use.`));
+				await abandon(registered, new Error(`provider ID "${taken[0]}" is already in use.`));
 			} else {
 				const previous = registered;
 				try {
 					registered = registerAll(pi, snapshot, (provider) => ctx.modelRegistry.getProvider(provider));
 				} catch (error) {
-					releaseOwned(previous);
-					fail(error);
+					await abandon(previous, error);
 				}
 			}
 		}

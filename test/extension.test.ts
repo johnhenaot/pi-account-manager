@@ -471,6 +471,29 @@ describe("loading lifecycle", () => {
 		expect(pi.last().message).toContain("/reload");
 	});
 
+	it("releases default-model entries when the session_start replacement fails", async () => {
+		const { defaultModelPerProvider: map } = (await import(modelResolverSpecifier())) as {
+			defaultModelPerProvider: Record<string, string>;
+		};
+		const ids = ["anthropic@work", "openai-codex@personal"];
+		try {
+			await writeStateFile(agentDir, {
+				version: 1,
+				accounts: [work, { provider: "openai-codex", name: "personal" }],
+			});
+			const pi = await start();
+			for (const id of ids) expect(map[id], `${id} adopted at bootstrap`).toBeTruthy();
+
+			pi.rejectProvider("openai-codex@personal");
+			await pi.emit("session_start", { type: "session_start", reason: "reload" });
+
+			// fail() clears the snapshot, so nothing later can derive these IDs to release.
+			for (const id of ids) expect(id in map, `${id} released`).toBe(false);
+		} finally {
+			for (const id of ids) delete map[id];
+		}
+	});
+
 	it("keeps native providers usable when loading fails", async () => {
 		await writeStateFile(agentDir, "{ broken");
 		const pi = await start();

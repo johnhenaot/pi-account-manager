@@ -1,0 +1,21 @@
+{
+	"name": "pi-account-manager",
+	"version": "0.1.0",
+	"description": "Pi extension for managing multiple named OAuth accounts per provider",
+	"license": "MIT",
+	"type": "module",
+	"pi": {
+		"extensions": ["./src/index.ts"]
+	},
+	"files": ["src"],
+	"scripts": {
+		"test": "vitest --run",
+		"typecheck": "tsc --noEmit"
+	},
+	"devDependencies": {
+		"@earendil-works/pi-ai": "0.82.0",
+		"@earendil-works/pi-coding-agent": "0.82.0",
+		"typescript": "^5.9.3",
+		"vitest": "^3.2.4"
+	}
+}

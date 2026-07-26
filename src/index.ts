@@ -182,12 +182,15 @@ export default async function (pi: ExtensionAPI) {
 			return;
 		}
 
+		// Pi only auto-selects a model after login for its own built-in provider IDs, so an
+		// alias login ends with "no default model is configured". Say so before it happens.
 		const login = `/login ${id}`;
+		const thenPickAModel = "then pick a model with /model.";
 		if (ctx.ui.getEditorText().trim() === "") {
 			ctx.ui.setEditorText(login);
-			ctx.ui.notify(`Added ${id}. Submit the prepared command to authenticate it.`, "info");
+			ctx.ui.notify(`Added ${id}. Submit the prepared command to sign in, ${thenPickAModel}`, "info");
 		} else {
-			ctx.ui.notify(`Added ${id}. Run ${login} to authenticate it.`, "info");
+			ctx.ui.notify(`Added ${id}. Run ${login} to sign in, ${thenPickAModel}`, "info");
 		}
 	};
 

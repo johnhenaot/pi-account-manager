@@ -27,7 +27,7 @@ pi install git:github.com/johnhenaot/pi-account-manager@v0.1.0
 ```
 
 Pick a provider when prompted. Pi prepares `/login anthropic@work` in your editor —
-press enter to run it and sign in as usual.
+press enter to run it and sign in as usual. Then pick a model with `/model`.
 
 That's it. `anthropic@work` is now an ordinary provider, so:
 
@@ -35,6 +35,19 @@ That's it. `anthropic@work` is now an ordinary provider, so:
 /model                     switch between your accounts and their models
 /login anthropic@work      sign in again later
 /logout                    sign out of an account
+```
+
+### "no default model is configured for provider"
+
+Pi shows this once, right after you sign in to a named account. It is harmless — you are
+signed in, and `/model` works immediately. Pi only auto-picks a model for its own
+built-in provider names, so it can't guess one for `anthropic@work`.
+
+Later sessions pick a model on their own. To skip the message entirely, name a default in
+`/settings`:
+
+```json
+{ "defaultProvider": "anthropic@work", "defaultModel": "claude-opus-4-8" }
 ```
 
 ## Commands

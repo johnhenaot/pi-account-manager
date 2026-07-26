@@ -288,6 +288,29 @@ describe("/account remove", () => {
 		expect(pi.credentials.entries.has("anthropic@other")).toBe(true);
 	});
 
+	it("advises /reload rather than /logout when the account is already gone", async () => {
+		const pi = await seeded([work]);
+		await pi.credentials.modify("anthropic@work", async () => oauthCredential());
+		await pi.runtime.refresh({ allowNetwork: false });
+		// Another process removed it; ours is still authenticated and still holds the snapshot.
+		await writeStateFile(agentDir, { version: 1, accounts: [] });
+
+		await pi.account("remove anthropic@work");
+		expect(pi.last().message).toContain("/reload");
+		// Advising /logout here would destroy a credential the other process kept on purpose.
+		expect(pi.last().message).not.toContain("/logout");
+		expect(pi.credentials.entries.has("anthropic@work")).toBe(true);
+	});
+
+	it("still blocks an authenticated account when the snapshot is current", async () => {
+		const pi = await seeded([work]);
+		await pi.credentials.modify("anthropic@work", async () => oauthCredential());
+		await pi.runtime.refresh({ allowNetwork: false });
+		await pi.account("remove anthropic@work");
+		expect(pi.last().message).toContain("/logout");
+		expect(await loadAccounts(agentDir)).toEqual([work]);
+	});
+
 	it("aborts with a /reload instruction when the target disappeared", async () => {
 		const pi = await seeded([work]);
 		await writeStateFile(agentDir, { version: 1, accounts: [] });

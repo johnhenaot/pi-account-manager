@@ -279,26 +279,25 @@ export default async function (pi: ExtensionAPI) {
 		}
 
 		const id = accountId(account);
-		const state = authState(ctx.modelRegistry, id);
-		// Fail closed: never forget an account whose credential status we could not confirm.
-		if (state === "status unavailable") {
-			ctx.ui.notify(`Cannot remove ${id}: its authentication status is unavailable.`, "error");
-			return;
-		}
-
-		const blockers: string[] = [];
-		if (state === "authenticated") blockers.push(`Run /logout for ${id} first.`);
-		if (ctx.model?.provider === id) blockers.push("Select another model with /model first.");
-		if (blockers.length > 0) {
-			ctx.ui.notify([`Cannot remove ${id}.`, ...blockers].join("\n"), "error");
-			return;
-		}
-
 		try {
 			snapshot = await mutateAccounts(
 				agentDir,
 				snapshot,
-				(accounts) => accounts.filter((candidate) => accountId(candidate) !== id),
+				(accounts) => {
+					// Applied under the lock, after the stale-snapshot check, so we never tell the
+					// user to /logout for an account another process already removed — following
+					// that advice would destroy a credential its removal deliberately kept.
+					const state = authState(ctx.modelRegistry, id);
+					// Fail closed: never forget an account whose credential status we could not confirm.
+					if (state === "status unavailable") throw new Error("its authentication status is unavailable.");
+
+					const blockers: string[] = [];
+					if (state === "authenticated") blockers.push(`Run /logout for ${id} first.`);
+					if (ctx.model?.provider === id) blockers.push("Select another model with /model first.");
+					if (blockers.length > 0) throw new Error(blockers.join("\n"));
+
+					return accounts.filter((candidate) => accountId(candidate) !== id);
+				},
 				() => {
 					const ours = registered.get(id);
 					// Never unregister a provider this extension does not own.

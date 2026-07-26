@@ -14,12 +14,6 @@ export function formatList(accounts: readonly Account[], status: (account: Accou
 		]),
 	];
 	const widths = rows[0].map((_, column) => Math.max(...rows.map((row) => row[column].length)));
-	return rows
-		.map((row) =>
-			row
-				.map((cell, column) => (column === row.length - 1 ? cell : cell.padEnd(widths[column])))
-				.join("  ")
-				.trimEnd(),
-		)
-		.join("\n");
+	// trimEnd drops the trailing pad, so the last column needs no special case.
+	return rows.map((row) => row.map((cell, i) => cell.padEnd(widths[i])).join("  ").trimEnd()).join("\n");
 }

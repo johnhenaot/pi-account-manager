@@ -8,10 +8,8 @@ export const statePath = (agentDir: string): string => join(stateDir(agentDir), 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
 	typeof value === "object" && value !== null && !Array.isArray(value);
 
-const hasExactKeys = (value: Record<string, unknown>, keys: string[]): boolean => {
-	const actual = Object.keys(value).sort();
-	return actual.length === keys.length && actual.every((key, i) => key === keys[i]);
-};
+const hasExactKeys = (value: Record<string, unknown>, keys: string[]): boolean =>
+	Object.keys(value).length === keys.length && keys.every((key) => key in value);
 
 export function parseState(text: string): Account[] {
 	let raw: unknown;
@@ -21,7 +19,7 @@ export function parseState(text: string): Account[] {
 		throw new Error("accounts.json is not valid JSON.");
 	}
 	if (!isRecord(raw)) throw new Error("accounts.json must contain a JSON object.");
-	if (!hasExactKeys(raw, ["accounts", "version"]))
+	if (!hasExactKeys(raw, ["version", "accounts"]))
 		throw new Error('accounts.json must contain exactly "version" and "accounts".');
 	if (raw.version !== 1) throw new Error(`accounts.json has unsupported version ${JSON.stringify(raw.version)}.`);
 	if (!Array.isArray(raw.accounts)) throw new Error('accounts.json "accounts" must be an array.');
@@ -30,7 +28,7 @@ export function parseState(text: string): Account[] {
 	const accounts: Account[] = [];
 	for (const entry of raw.accounts) {
 		if (!isRecord(entry)) throw new Error("accounts.json has an account entry that is not an object.");
-		if (!hasExactKeys(entry, ["name", "provider"]))
+		if (!hasExactKeys(entry, ["provider", "name"]))
 			throw new Error('each account must contain exactly "provider" and "name".');
 		const { provider, name } = entry;
 		if (typeof provider !== "string" || !isProviderId(provider))

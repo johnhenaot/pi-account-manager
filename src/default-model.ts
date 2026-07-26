@@ -18,29 +18,17 @@ import type { ProviderId } from "./account.ts";
  */
 type DefaultModelMap = Record<string, string>;
 
-const CANDIDATE_PATHS = [
-	// npm/node layout, and the compiled-binary layout where dist/ is flattened.
-	["dist", "core", "model-resolver.js"],
-	["core", "model-resolver.js"],
-];
-
 let loaded: DefaultModelMap | null | undefined;
 
 async function defaultModelMap(): Promise<DefaultModelMap | null> {
 	if (loaded !== undefined) return loaded;
 	loaded = null;
-	for (const segments of CANDIDATE_PATHS) {
-		try {
-			const specifier = pathToFileURL(join(getPackageDir(), ...segments)).href;
-			const module = (await import(specifier)) as { defaultModelPerProvider?: unknown };
-			const map = module.defaultModelPerProvider;
-			if (map && typeof map === "object") {
-				loaded = map as DefaultModelMap;
-				break;
-			}
-		} catch {
-			// Try the next layout.
-		}
+	try {
+		const specifier = pathToFileURL(join(getPackageDir(), "dist", "core", "model-resolver.js")).href;
+		const map = ((await import(specifier)) as { defaultModelPerProvider?: unknown }).defaultModelPerProvider;
+		if (map && typeof map === "object") loaded = map as DefaultModelMap;
+	} catch {
+		// Pi's internals moved. Aliases keep pi's "use /model to select a model" message.
 	}
 	return loaded;
 }
@@ -51,9 +39,4 @@ export async function adoptNativeDefaultModel(provider: ProviderId, aliasId: str
 	const nativeDefault = map?.[provider];
 	if (!map || typeof nativeDefault !== "string") return;
 	map[aliasId] ??= nativeDefault;
-}
-
-export async function forgetDefaultModel(aliasId: string): Promise<void> {
-	const map = await defaultModelMap();
-	if (map) delete map[aliasId];
 }

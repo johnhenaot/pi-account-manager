@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { getPackageDir } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { adoptNativeDefaultModel, forgetDefaultModel } from "../src/default-model.ts";
+import { adoptNativeDefaultModel } from "../src/default-model.ts";
 import { cleanupAgentDir, harness, makeAgentDir, writeStateFile } from "./helpers.ts";
 
 /** The same internal map pi reads when auto-selecting a model after /login. */
@@ -20,7 +20,8 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-	for (const id of touched.splice(0)) await forgetDefaultModel(id);
+	const map = await piDefaultModelMap();
+	for (const id of touched.splice(0)) delete map[id];
 	await cleanupAgentDir(agentDir);
 });
 
@@ -100,18 +101,6 @@ describe("adoptNativeDefaultModel", () => {
 		track("openai-codex@two");
 		expect(map["anthropic@one"]).toBe(map.anthropic);
 		expect(map["openai-codex@two"]).toBe(map["openai-codex"]);
-	});
-
-	it("forgets the entry again on removal", async () => {
-		const map = await piDefaultModelMap();
-		await writeStateFile(agentDir, { version: 1, accounts: [{ provider: "anthropic", name: "gone" }] });
-		const pi = await harness(agentDir);
-		pi.emit("session_start", { type: "session_start", reason: "startup" });
-		await pi.runtime.refresh({ allowNetwork: false });
-		expect(map["anthropic@gone"]).toBeTruthy();
-
-		await pi.account("remove anthropic@gone");
-		expect("anthropic@gone" in map).toBe(false);
 	});
 
 	it("leaves no entry behind when loading fails", async () => {

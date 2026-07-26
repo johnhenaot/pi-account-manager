@@ -18,7 +18,7 @@ import {
 } from "./account.ts";
 import { buildAlias, bundledProvider } from "./alias.ts";
 import { parseCommand, resolveRemoveTarget, USAGE } from "./command.ts";
-import { adoptNativeDefaultModel, forgetDefaultModel } from "./default-model.ts";
+import { adoptNativeDefaultModel } from "./default-model.ts";
 import { EMPTY_LIST, formatList } from "./list.ts";
 import { loadAccounts, mutateAccounts } from "./state.ts";
 
@@ -244,7 +244,6 @@ export default async function (pi: ExtensionAPI) {
 			return;
 		}
 
-		await forgetDefaultModel(id);
 		ctx.ui.notify(`Removed ${id}. Its credential is untouched; use /logout to remove that.`, "info");
 	};
 

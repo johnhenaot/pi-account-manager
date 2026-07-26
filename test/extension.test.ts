@@ -543,6 +543,35 @@ describe("reload cleanup", () => {
 });
 
 describe("provider ID ownership at session_start", () => {
+	it("detects a foreign provider that clobbered an ID we had registered", async () => {
+		await writeStateFile(agentDir, { version: 1, accounts: [work] });
+		const pi = await start();
+		// Our bootstrap registration succeeded, so the ID is in our bookkeeping...
+		expect(pi.providers.has("anthropic@work")).toBe(true);
+		// ...but another extension loaded later and took the ID (last writer wins).
+		const foreign = stubProvider("anthropic@work");
+		pi.registry.registerProvider(foreign);
+
+		await pi.emit("session_start", { type: "session_start", reason: "startup" });
+
+		// String bookkeeping alone would have skipped the conflict check and replaced it.
+		await pi.account("");
+		expect(pi.last().type).toBe("error");
+		expect(pi.last().message).toContain("already in use");
+		expect(pi.registry.getRegisteredNativeProvider("anthropic@work")).toBe(foreign);
+	});
+
+	it("never unregisters a provider it does not own while cleaning up", async () => {
+		await writeStateFile(agentDir, { version: 1, accounts: [work] });
+		const pi = await start();
+		const foreign = stubProvider("anthropic@work");
+		pi.registry.registerProvider(foreign);
+
+		await pi.emit("session_shutdown", { type: "session_shutdown", reason: "reload" });
+		expect(pi.registry.getRegisteredNativeProvider("anthropic@work")).toBe(foreign);
+	});
+
+
 	it("refuses to take over an alias ID owned by someone else", async () => {
 		await writeStateFile(agentDir, { version: 1, accounts: [work] });
 		const pi = await start();

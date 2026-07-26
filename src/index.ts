@@ -59,6 +59,16 @@ export function anthropicWarningEnabled(ctx: ExtensionContext): boolean {
 	}
 }
 
+/**
+ * Ownership is proven against the raw registered provider rather than the composed one:
+ * pi returns the registered object untouched only when no models.json entry or extension
+ * config overlays that ID, so comparing against `getProvider()` would report a legitimately
+ * composed alias as foreign.
+ */
+function stillOurs(registry: ModelRegistry, id: string, ours: Provider | undefined): boolean {
+	return ours !== undefined && registry.getRegisteredNativeProvider(id) === ours;
+}
+
 /** The subset of pi's registration surface this extension needs. */
 interface Registrar {
 	registerProvider(provider: Provider): void;
@@ -71,22 +81,23 @@ interface Registrar {
  *
  * Note: at bootstrap pi queues these registrations and drains them later with a per-item
  * try/catch that logs and continues, so the unwind below only runs on the session_start
- * path. Bootstrap atomicity is pi's to give, not ours.
+ * path. Bootstrap atomicity is pi's to give, not ours — which is also why the returned
+ * providers are only *attempted* registrations until ownership is confirmed.
  */
 function registerAll(
 	registrar: Registrar,
 	accounts: readonly Account[],
 	base: (provider: ProviderId) => Provider | undefined,
-): string[] {
+): Map<string, Provider> {
 	const aliases = accounts.map((account) => buildAlias(base(account.provider), account));
-	const done: string[] = [];
+	const done = new Map<string, Provider>();
 	try {
 		for (const alias of aliases) {
 			registrar.registerProvider(alias);
-			done.push(alias.id);
+			done.set(alias.id, alias);
 		}
 	} catch (error) {
-		for (const id of done) registrar.unregisterProvider(id);
+		for (const id of done.keys()) registrar.unregisterProvider(id);
 		throw error;
 	}
 	return done;
@@ -95,7 +106,7 @@ function registerAll(
 export default async function (pi: ExtensionAPI) {
 	const agentDir = getAgentDir();
 	let snapshot: Account[] = [];
-	let registered: string[] = [];
+	let registered = new Map<string, Provider>();
 	let loadError: string | undefined;
 
 	const latch = globalThis as unknown as LatchHolder;
@@ -103,7 +114,7 @@ export default async function (pi: ExtensionAPI) {
 	const fail = (error: unknown) => {
 		loadError = `Named accounts are unavailable: ${errorMessage(error)}`;
 		snapshot = [];
-		registered = [];
+		registered = new Map();
 	};
 
 	const isOwnAnthropicAlias = (providerId: string): boolean =>
@@ -132,19 +143,22 @@ export default async function (pi: ExtensionAPI) {
 	// ctx.modelRegistry so pi refreshes the live model object after the swap.
 	pi.on("session_start", async (_event, ctx) => {
 		if (!loadError && snapshot.length > 0) {
-			const mine = new Set(registered);
+			const releaseOwned = (owned: Map<string, Provider>) => {
+				for (const [id, provider] of owned) if (stillOurs(ctx.modelRegistry, id, provider)) pi.unregisterProvider(id);
+			};
 			const taken = snapshot
 				.map(accountId)
-				.filter((id) => !mine.has(id) && ctx.modelRegistry.getProvider(id) !== undefined);
+				.filter((id) => !stillOurs(ctx.modelRegistry, id, registered.get(id)))
+				.filter((id) => ctx.modelRegistry.getProvider(id) !== undefined);
 			if (taken.length > 0) {
-				for (const id of registered) pi.unregisterProvider(id);
+				releaseOwned(registered);
 				fail(new Error(`provider ID "${taken[0]}" is already in use.`));
 			} else {
 				const previous = registered;
 				try {
 					registered = registerAll(pi, snapshot, (provider) => ctx.modelRegistry.getProvider(provider));
 				} catch (error) {
-					for (const id of previous) pi.unregisterProvider(id);
+					releaseOwned(previous);
 					fail(error);
 				}
 			}
@@ -162,8 +176,10 @@ export default async function (pi: ExtensionAPI) {
 	// closure, so without this the previous instance's aliases stay registered forever.
 	pi.on("session_shutdown", (event, ctx) => {
 		if (event.reason !== "reload") return;
-		for (const id of registered) ctx.modelRegistry.unregisterProvider(id);
-		registered = [];
+		for (const [id, provider] of registered) {
+			if (stillOurs(ctx.modelRegistry, id, provider)) ctx.modelRegistry.unregisterProvider(id);
+		}
+		registered = new Map();
 	});
 
 	pi.on("model_select", (event, ctx) => maybeWarnAnthropic(ctx, event.model?.provider));
@@ -221,10 +237,10 @@ export default async function (pi: ExtensionAPI) {
 				(accounts) => [...accounts, account],
 				() => {
 					pi.registerProvider(alias);
-					registered = [...registered, id];
+					registered.set(id, alias);
 					return () => {
 						pi.unregisterProvider(id);
-						registered = registered.filter((candidate) => candidate !== id);
+						registered.delete(id);
 					};
 				},
 			);
@@ -284,12 +300,15 @@ export default async function (pi: ExtensionAPI) {
 				snapshot,
 				(accounts) => accounts.filter((candidate) => accountId(candidate) !== id),
 				() => {
-					const displaced = ctx.modelRegistry.getProvider(id);
-					pi.unregisterProvider(id);
-					registered = registered.filter((candidate) => candidate !== id);
+					const ours = registered.get(id);
+					// Never unregister a provider this extension does not own.
+					if (stillOurs(ctx.modelRegistry, id, ours)) pi.unregisterProvider(id);
+					registered.delete(id);
 					return () => {
-						if (displaced) pi.registerProvider(displaced);
-						registered = [...registered, id];
+						if (ours) {
+							pi.registerProvider(ours);
+							registered.set(id, ours);
+						}
 					};
 				},
 			);

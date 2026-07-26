@@ -110,14 +110,15 @@ async function withLock<T>(agentDir: string, fn: () => Promise<T>): Promise<T> {
 }
 
 /**
- * `commit` is the runtime half of the update. When it throws, the file goes back to what
- * it was, so persistent and runtime state are always both changed or both unchanged.
+ * `commit` is the runtime half of the update; it returns its own inverse, which runs if
+ * publishing the file then fails. Persistent and runtime state therefore end up both
+ * changed or both unchanged.
  */
 export async function mutateAccounts(
 	agentDir: string,
 	snapshot: readonly Account[],
 	change: (accounts: Account[]) => Account[],
-	commit?: (accounts: Account[]) => void,
+	commit?: (accounts: Account[]) => (() => void) | void,
 ): Promise<Account[]> {
 	return withLock(agentDir, async () => {
 		let current: Account[];
@@ -134,13 +135,28 @@ export async function mutateAccounts(
 		// that this one is about to abandon, so the rename happens last.
 		const next = sortForPersistence(change(current));
 		const staged = await stageState(agentDir, next);
+
+		let undoCommit: (() => void) | void;
 		try {
-			commit?.(next);
+			undoCommit = commit?.(next);
 		} catch (error) {
 			await rm(staged, { force: true });
 			throw error;
 		}
-		await rename(staged, statePath(agentDir));
+
+		try {
+			await rename(staged, statePath(agentDir));
+		} catch (error) {
+			// Publishing failed after the runtime half succeeded, so put the runtime back
+			// rather than leaving it ahead of the file.
+			try {
+				undoCommit?.();
+			} catch {
+				// The original failure is the useful one to report.
+			}
+			await rm(staged, { force: true });
+			throw error;
+		}
 		return next;
 	});
 }

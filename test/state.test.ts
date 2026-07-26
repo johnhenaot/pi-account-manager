@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -143,6 +143,27 @@ describe("mutateAccounts", () => {
 			),
 		).rejects.toThrow("registration failed");
 		expect(seenByAnotherProcess, "tentative state must not be visible").toEqual([]);
+	});
+
+	it("puts the runtime back when publishing the file fails", async () => {
+		let undone = false;
+		await expect(
+			mutateAccounts(
+				agentDir,
+				[],
+				(accounts) => [...accounts, work],
+				() => {
+					// Occupy the target path with a directory so the final rename cannot land.
+					mkdirSync(statePath(agentDir), { recursive: true });
+					return () => {
+						undone = true;
+					};
+				},
+			),
+		).rejects.toThrow();
+		expect(undone, "runtime commit must be rolled back when the rename fails").toBe(true);
+		const left = (await readdir(join(agentDir, "pi-account-manager"))).filter((f) => f.endsWith(".tmp"));
+		expect(left).toEqual([]);
 	});
 
 	it("maps an unparseable authoritative file to the /reload recovery path", async () => {

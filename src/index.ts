@@ -222,6 +222,10 @@ export default async function (pi: ExtensionAPI) {
 				() => {
 					pi.registerProvider(alias);
 					registered = [...registered, id];
+					return () => {
+						pi.unregisterProvider(id);
+						registered = registered.filter((candidate) => candidate !== id);
+					};
 				},
 			);
 		} catch (error) {
@@ -280,8 +284,13 @@ export default async function (pi: ExtensionAPI) {
 				snapshot,
 				(accounts) => accounts.filter((candidate) => accountId(candidate) !== id),
 				() => {
+					const displaced = ctx.modelRegistry.getProvider(id);
 					pi.unregisterProvider(id);
 					registered = registered.filter((candidate) => candidate !== id);
+					return () => {
+						if (displaced) pi.registerProvider(displaced);
+						registered = [...registered, id];
+					};
 				},
 			);
 		} catch (error) {

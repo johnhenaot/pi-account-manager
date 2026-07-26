@@ -1,11 +1,4 @@
-/**
- * pi-account-manager — named OAuth accounts for Anthropic and OpenAI Codex.
- *
- * Each account becomes an alias provider (`anthropic@work`), so pi's own /login,
- * /logout, and /model handle authentication and switching. `/account` only creates,
- * lists, and forgets the names.
- */
-
+import type { Provider } from "@earendil-works/pi-ai";
 import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
@@ -13,25 +6,20 @@ import type {
 	ModelRegistry,
 } from "@earendil-works/pi-coding-agent";
 import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
-import type { Provider } from "@earendil-works/pi-ai";
 import {
 	type Account,
 	accountId,
-	EMPTY_LIST,
-	formatList,
 	isValidName,
-	loadAccounts,
-	mutateAccounts,
 	NAME_RULE,
 	normalizeName,
-	parseCommand,
 	PROVIDERS,
 	type ProviderId,
 	providerIdFor,
-	resolveRemoveTarget,
-	USAGE,
-} from "./accounts.ts";
+} from "./account.ts";
 import { buildAlias, bundledProvider } from "./alias.ts";
+import { parseCommand, resolveRemoveTarget, USAGE } from "./command.ts";
+import { EMPTY_LIST, formatList } from "./list.ts";
+import { loadAccounts, mutateAccounts } from "./state.ts";
 
 export const ANTHROPIC_EXTRA_USAGE_WARNING =
 	"Anthropic subscription auth is active. Third-party harness usage draws from extra usage and is billed per token, not your Claude plan limits. Manage extra usage at https://claude.ai/settings/usage. Disable this warning in /settings.";
@@ -40,7 +28,7 @@ export type AuthState = "authenticated" | "not authenticated" | "status unavaila
 
 const describe = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
-/** Only what pi reports. An unregistered alias or any failure is "status unavailable". */
+/** Reports only what pi reports. An unregistered alias or any failure is "status unavailable". */
 export function authState(registry: ModelRegistry, id: string): AuthState {
 	try {
 		if (!registry.getProvider(id)) return "status unavailable";
@@ -52,12 +40,12 @@ export function authState(registry: ModelRegistry, id: string): AuthState {
 	}
 }
 
-/** A setting that cannot be read leaves the warning enabled. */
 export function anthropicWarningEnabled(ctx: ExtensionContext): boolean {
 	try {
 		const settings = SettingsManager.create(ctx.cwd, undefined, { projectTrusted: ctx.isProjectTrusted() });
 		return settings.getWarnings().anthropicExtraUsage !== false;
 	} catch {
+		// An unreadable setting must not silently disable the warning.
 		return true;
 	}
 }
@@ -68,7 +56,7 @@ interface Registrar {
 	unregisterProvider(name: string): void;
 }
 
-/** Build every alias before registering any, then roll back if a registration fails. */
+/** Builds every alias before registering any, then rolls back if a registration fails. */
 function registerAll(
 	registrar: Registrar,
 	accounts: readonly Account[],
@@ -101,7 +89,6 @@ export default async function (pi: ExtensionAPI) {
 		registered = [];
 	};
 
-	// Bootstrap against the bundled factories so aliases exist before the first session.
 	try {
 		snapshot = await loadAccounts(agentDir);
 		registered = registerAll(pi, snapshot, bundledProvider);
@@ -109,8 +96,8 @@ export default async function (pi: ExtensionAPI) {
 		fail(error);
 	}
 
-	// Replace every bootstrap alias with one built from the effective registry, which
-	// includes any models.json overlay. All-or-none, like the bootstrap.
+	// Rebuild against the effective registry, which includes any models.json overlay that the
+	// bundled factories know nothing about. All-or-none, like the bootstrap.
 	pi.on("session_start", (_event, ctx) => {
 		if (loadError || snapshot.length === 0) return;
 		const previous = registered;
@@ -171,7 +158,7 @@ export default async function (pi: ExtensionAPI) {
 			return;
 		}
 
-		// Verify before touching any state, so a rejected add leaves nothing behind.
+		// Verified before anything is written, so a rejected add leaves nothing behind.
 		let alias: Provider;
 		try {
 			alias = buildAlias(ctx.modelRegistry.getProvider(provider), account);
@@ -224,6 +211,7 @@ export default async function (pi: ExtensionAPI) {
 
 		const id = accountId(account);
 		const state = authState(ctx.modelRegistry, id);
+		// Fail closed: never forget an account whose credential status we could not confirm.
 		if (state === "status unavailable") {
 			ctx.ui.notify(`Cannot remove ${id}: its authentication status is unavailable.`, "error");
 			return;

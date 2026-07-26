@@ -3,74 +3,74 @@
 Pi extension for managing multiple named OAuth accounts per provider.
 
 Log in to Anthropic twice — `anthropic@work` and `anthropic@personal` — and switch
-between them with `/model`. Each account keeps its own OAuth credential and its own
-usage attribution.
+between them with `/model`. Each account keeps its own login and its own usage.
 
 Supported providers: Anthropic, OpenAI Codex. Requires pi 0.82.
 
 ## Install
 
-Point pi at a checkout via `settings.json`:
-
-```json
-{ "extensions": ["/path/to/pi-account-manager"] }
+```bash
+pi install git:github.com/johnhenaot/pi-account-manager
 ```
 
-## Usage
+SSH and a pinned tag work too:
+
+```bash
+pi install git:git@github.com:johnhenaot/pi-account-manager
+pi install git:github.com/johnhenaot/pi-account-manager@v0.1.0
+```
+
+## Adding an account
 
 ```text
-/account                        list named accounts
-/account list                   list named accounts
-/account add [name]             add a named account
-/account remove [name|alias-id] remove a named account
+/account add work
 ```
 
-`/account add work` prompts for a provider, registers `anthropic@work`, and prepares
-`/login anthropic@work` for you to submit. From then on it is an ordinary pi provider:
+Pick a provider when prompted. Pi prepares `/login anthropic@work` in your editor —
+press enter to run it and sign in as usual.
+
+That's it. `anthropic@work` is now an ordinary provider, so:
 
 ```text
-/login anthropic@work      authenticate the account
-/logout                    remove its credential (the account stays registered)
-/model                     switch between accounts and models
+/model                     switch between your accounts and their models
+/login anthropic@work      sign in again later
+/logout                    sign out of an account
 ```
 
-`/account` never touches credentials — it only creates, lists, and forgets names.
-`/logout` remains the only way to remove a credential. Removing an account requires
-logging out of it first and switching off its models.
+## Commands
 
-Names are trimmed and lowercased, and must match `^[a-z0-9][a-z0-9_-]{0,31}$`. The same
-name may be used once per provider.
-
-## State
-
-Named accounts are global across projects, stored at
-`$PI_CODING_AGENT_DIR/pi-account-manager/accounts.json`:
-
-```json
-{
-  "version": 1,
-  "accounts": [{ "provider": "anthropic", "name": "work" }]
-}
+```text
+/account                        list your accounts
+/account list                   list your accounts
+/account add [name]             add an account
+/account remove [name|alias-id] remove an account
 ```
 
-No credentials or model state live in that file. Credentials stay in pi's own
-`auth.json`, keyed by alias ID. A corrupt or unreadable file disables named accounts
-for that process — `/account` reports the error and native providers keep working.
+`/account` shows each account's name, provider, and whether it's signed in:
+
+```text
+NAME      PROVIDER      ALIAS ID            STATUS
+personal  Anthropic     anthropic@personal  not authenticated
+work      Anthropic     anthropic@work      authenticated
+work      OpenAI Codex  openai-codex@work   authenticated
+```
+
+Removing an account only forgets the name — it never deletes your login. Sign out with
+`/logout` first, and switch off its models with `/model`; `/account remove` will tell you
+if either is still needed.
+
+## Account names
+
+Names are trimmed and lowercased, and must be 1–32 characters of `a-z`, `0-9`, `_` or
+`-`, starting with a letter or digit. The same name can be used once per provider, so
+`anthropic@work` and `openai-codex@work` can both exist.
 
 ## Anthropic subscription usage
 
-Selecting an authenticated `anthropic@<name>` model warns once per process that
-third-party harness usage is billed per token against extra usage rather than your
-Claude plan limits. Silence it with `"warnings": { "anthropicExtraUsage": false }` in
-settings.
+The first time you pick an `anthropic@<name>` model, pi warns you that usage through a
+third-party harness is billed per token against extra usage rather than your Claude plan
+limits. To silence it, set this in `/settings`:
 
-## Development
-
-```bash
-npm install
-npm test          # vitest, no network or live OAuth required
-npm run typecheck
-pi -e ./src/index.ts
+```json
+{ "warnings": { "anthropicExtraUsage": false } }
 ```
-
-Design: [`docs/superpowers/specs/2026-07-24-pi-account-manager-design.md`](docs/superpowers/specs/2026-07-24-pi-account-manager-design.md).

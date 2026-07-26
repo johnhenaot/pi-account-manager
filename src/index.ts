@@ -251,7 +251,9 @@ export default async function (pi: ExtensionAPI) {
 					pi.registerProvider(alias);
 					registered.set(id, alias);
 					return () => {
-						pi.unregisterProvider(id);
+						// The ID can change hands while the rename is pending, so unregister only
+						// what is still ours.
+						if (stillOurs(ctx.modelRegistry, id, alias)) pi.unregisterProvider(id);
 						registered.delete(id);
 					};
 				},
@@ -315,8 +317,14 @@ export default async function (pi: ExtensionAPI) {
 					if (unregistered) pi.unregisterProvider(id);
 					registered.delete(id);
 					return () => {
-						// Only what this commit removed, so a rollback cannot overwrite a foreign provider.
-						if (unregistered && ours) pi.registerProvider(ours);
+						if (unregistered && ours) {
+							// The freed ID may have been claimed while the rename was pending; a
+							// rollback that cannot restore must be reported, not silently skipped.
+							if (ctx.modelRegistry.getProvider(id) !== undefined) {
+								throw new Error(`provider ID "${id}" was claimed before the removal could roll back.`);
+							}
+							pi.registerProvider(ours);
+						}
 						if (ours) registered.set(id, ours);
 					};
 				},

@@ -99,7 +99,9 @@ async function withLock<T>(agentDir: string, fn: () => Promise<T>): Promise<T> {
 	try {
 		return await fn();
 	} finally {
-		await rm(lockPath, { force: true });
+		// A cleanup failure must not turn an already committed mutation into a failed one; the
+		// leftover lock surfaces on the next attempt, which names the file to delete.
+		await rm(lockPath, { force: true }).catch(() => {});
 	}
 }
 

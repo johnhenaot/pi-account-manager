@@ -1,5 +1,6 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
-import { mkdir, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Account, accountId, sortForPersistence } from "../src/account.ts";
@@ -242,6 +243,24 @@ describe("mutateAccounts", () => {
 		const lockPath = join(agentDir, "pi-account-manager", "accounts.lock");
 		await writeFile(lockPath, "", "utf8");
 		await expect(mutateAccounts(agentDir, [], (accounts) => accounts)).rejects.toThrow(lockPath);
+	}, 20_000);
+
+	// Darwin-only: chflags is the portable-enough way to make the lock file undeletable.
+	it.skipIf(process.platform !== "darwin")("keeps a committed mutation when lock cleanup fails", async () => {
+		const lock = join(agentDir, "pi-account-manager", "accounts.lock");
+		let flagged = false;
+		const result = mutateAccounts(agentDir, [], (accounts) => [...accounts, work], () => {
+			execFileSync("chflags", ["uchg", lock]);
+			flagged = true;
+		});
+		try {
+			// The rename already succeeded, so a failed unlink must not fail the command.
+			await expect(result).resolves.toEqual([work]);
+			expect(JSON.parse(await readStateFile(agentDir))).toEqual({ version: 1, accounts: [work] });
+		} finally {
+			if (flagged) execFileSync("chflags", ["nouchg", lock]);
+			await rm(lock, { force: true });
+		}
 	}, 20_000);
 
 	it("releases the lock after a successful update", async () => {

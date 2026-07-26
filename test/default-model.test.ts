@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { adoptNativeDefaultModel, modelResolverSpecifier } from "../src/default-model.ts";
+import { adoptNativeDefaultModel, modelResolverSpecifier, releaseDefaultModel } from "../src/default-model.ts";
 import { cleanupAgentDir, harness, makeAgentDir, writeStateFile } from "./helpers.ts";
 
 const run = promisify(execFile);
@@ -107,6 +107,33 @@ describe("adoptNativeDefaultModel", () => {
 			const offered = pi.registry.getAll().filter((model) => model.provider === aliasId);
 			expect(offered.some((model) => model.id === wanted), `${aliasId} offers ${wanted}`).toBe(true);
 		}
+	});
+
+	it("releases only entries it installed", async () => {
+		const map = await piDefaultModelMap();
+		await adoptNativeDefaultModel("anthropic", track("anthropic@mine"));
+		expect(map["anthropic@mine"]).toBe(map.anthropic);
+
+		await releaseDefaultModel("anthropic@mine");
+		expect("anthropic@mine" in map).toBe(false);
+	});
+
+	it("leaves an entry that predated this extension", async () => {
+		const map = await piDefaultModelMap();
+		const id = track("anthropic@preexisting");
+		map[id] = "someone-elses-choice";
+
+		await adoptNativeDefaultModel("anthropic", id);
+		await releaseDefaultModel(id);
+		// Releasing must not delete a key we never installed.
+		expect(map[id]).toBe("someone-elses-choice");
+	});
+
+	it("is a no-op for an unknown alias", async () => {
+		const map = await piDefaultModelMap();
+		const before = { ...map };
+		await releaseDefaultModel("anthropic@never-seen");
+		expect(Object.keys(map).sort()).toEqual(Object.keys(before).sort());
 	});
 
 	it("never clobbers an existing entry", async () => {

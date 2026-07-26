@@ -1,11 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Account } from "../src/account.ts";
 import { USAGE } from "../src/command.ts";
 import { ANTHROPIC_EXTRA_USAGE_WARNING, ANTHROPIC_WARNING_LATCH, authState, HOST_VERSION_LATCH, SUPPORTED_PI } from "../src/index.ts";
 import { EMPTY_LIST } from "../src/list.ts";
+import { modelResolverSpecifier } from "../src/default-model.ts";
 import { loadAccounts, statePath } from "../src/state.ts";
 import {
 	cleanupAgentDir,
@@ -191,6 +192,30 @@ describe("/account add", () => {
 		expect(await loadAccounts(agentDir)).toEqual([]);
 	});
 
+	/**
+	 * The pre-flight ID check runs before the lock and several awaits, so the ID can be
+	 * claimed while the command waits. Holding the lock makes that window deterministic.
+	 */
+	it("refuses an ID claimed while the command waited for the lock", async () => {
+		const pi = await start({ answers: ["Anthropic"] });
+		const lock = join(agentDir, "pi-account-manager", "accounts.lock");
+		await mkdir(join(agentDir, "pi-account-manager"), { recursive: true });
+		await writeFile(lock, "", "utf8");
+
+		const pending = pi.account("add work");
+		// Past the pre-flight check and blocked on the lock; now another extension claims it.
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		const foreign = stubProvider("anthropic@work");
+		pi.registry.registerProvider(foreign);
+		await rm(lock, { force: true });
+		await pending;
+
+		expect(pi.last().type).toBe("error");
+		expect(pi.last().message).toContain("already in use");
+		expect(pi.registry.getRegisteredNativeProvider("anthropic@work")).toBe(foreign);
+		expect(await loadAccounts(agentDir)).toEqual([]);
+	}, 20_000);
+
 	it("aborts with a /reload instruction when state drifted", async () => {
 		const pi = await start({ answers: ["Anthropic"] });
 		await writeStateFile(agentDir, { version: 1, accounts: [{ provider: "openai-codex", name: "other" }] });
@@ -321,6 +346,19 @@ describe("/account remove", () => {
 			expect(await loadAccounts(agentDir)).toEqual([work]);
 		},
 	);
+
+	it("gives back the default-model entry so a later owner of the ID is not poisoned", async () => {
+		const { defaultModelPerProvider: map } = (await import(modelResolverSpecifier())) as {
+			defaultModelPerProvider: Record<string, string>;
+		};
+		const pi = await seeded([work]);
+		expect(map["anthropic@work"]).toBeTruthy();
+
+		await pi.account("remove anthropic@work");
+		expect(await loadAccounts(agentDir)).toEqual([]);
+		// A provider that later takes this ID must not inherit our default model.
+		expect("anthropic@work" in map).toBe(false);
+	});
 
 	it("leaves a foreign provider alone when removing the account behind its ID", async () => {
 		const pi = await seeded([work]);

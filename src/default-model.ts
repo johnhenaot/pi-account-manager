@@ -17,6 +17,14 @@ import type { ProviderId } from "./account.ts";
  */
 type DefaultModelMap = Record<string, string>;
 
+/**
+ * Entries this extension added, so removal never deletes one that predated it. Keyed on
+ * globalThis because `/reload` re-runs the factory and may re-evaluate this module, while
+ * the map being mutated belongs to the host and outlives both.
+ */
+const INSTALLED = Symbol.for("pi-account-manager.installedDefaultModels");
+const installed = ((globalThis as Record<symbol, unknown>)[INSTALLED] ??= new Set<string>()) as Set<string>;
+
 export type Resolver = ((specifier: string) => string) | undefined;
 
 /** Detached so callers can substitute it; absent under bundlers that stub import.meta. */
@@ -68,5 +76,19 @@ export async function adoptNativeDefaultModel(provider: ProviderId, aliasId: str
 	const map = await defaultModelMap();
 	const nativeDefault = map?.[provider];
 	if (!map || typeof nativeDefault !== "string") return;
-	map[aliasId] ??= nativeDefault;
+	// An existing entry is either ours already or predates us; either way, leave it.
+	if (aliasId in map) return;
+	map[aliasId] = nativeDefault;
+	installed.add(aliasId);
+}
+
+/**
+ * Drop the entry once this extension stops owning the alias ID. Without this, a provider
+ * that later takes the same ID would inherit our default and pi would try to select a
+ * model that provider may not offer.
+ */
+export async function releaseDefaultModel(aliasId: string): Promise<void> {
+	if (!installed.delete(aliasId)) return;
+	const map = await defaultModelMap();
+	if (map) delete map[aliasId];
 }

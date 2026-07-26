@@ -19,7 +19,7 @@ import {
 } from "./account.ts";
 import { buildAlias, bundledProvider } from "./alias.ts";
 import { parseCommand, resolveRemoveTarget, USAGE } from "./command.ts";
-import { adoptNativeDefaultModel } from "./default-model.ts";
+import { adoptNativeDefaultModel, releaseDefaultModel } from "./default-model.ts";
 import { EMPTY_LIST, formatList } from "./list.ts";
 import { loadAccounts, mutateAccounts } from "./state.ts";
 
@@ -167,6 +167,7 @@ export default async function (pi: ExtensionAPI) {
 				.filter((id) => ctx.modelRegistry.getProvider(id) !== undefined);
 			if (taken.length > 0) {
 				releaseOwned(registered);
+				await Promise.all(snapshot.map((account) => releaseDefaultModel(accountId(account))));
 				fail(new Error(`provider ID "${taken[0]}" is already in use.`));
 			} else {
 				const previous = registered;
@@ -189,11 +190,12 @@ export default async function (pi: ExtensionAPI) {
 
 	// Pi reuses one ModelRuntime across /reload but gives the reloaded extension a fresh
 	// closure, so without this the previous instance's aliases stay registered forever.
-	pi.on("session_shutdown", (event, ctx) => {
+	pi.on("session_shutdown", async (event, ctx) => {
 		if (event.reason !== "reload") return;
 		for (const [id, provider] of registered) {
 			if (stillOurs(ctx.modelRegistry, id, provider)) ctx.modelRegistry.unregisterProvider(id);
 		}
+		await Promise.all([...registered.keys()].map(releaseDefaultModel));
 		registered = new Map();
 	});
 
@@ -251,6 +253,11 @@ export default async function (pi: ExtensionAPI) {
 				snapshot,
 				(accounts) => [...accounts, account],
 				() => {
+					// Rechecked here: the pre-flight check above runs before the lock and several
+					// awaits, so the ID can be claimed while this command waits on contention.
+					if (ctx.modelRegistry.getProvider(id) !== undefined) {
+						throw new Error(`provider ID "${id}" is already in use.`);
+					}
 					pi.registerProvider(alias);
 					registered.set(id, alias);
 					return () => {
@@ -334,6 +341,7 @@ export default async function (pi: ExtensionAPI) {
 			return;
 		}
 
+		await releaseDefaultModel(id);
 		ctx.ui.notify(`Removed ${id}. Its credential is untouched; use /logout to remove that.`, "info");
 	};
 

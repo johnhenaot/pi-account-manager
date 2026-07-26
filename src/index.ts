@@ -5,7 +5,7 @@ import type {
 	ExtensionContext,
 	ModelRegistry,
 } from "@earendil-works/pi-coding-agent";
-import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, SettingsManager, VERSION } from "@earendil-works/pi-coding-agent";
 import {
 	type Account,
 	accountId,
@@ -32,6 +32,13 @@ export const ANTHROPIC_EXTRA_USAGE_WARNING =
  * both a new factory closure and a re-evaluated module. Exported so tests can clear it.
  */
 export const ANTHROPIC_WARNING_LATCH = Symbol.for("pi-account-manager.anthropicExtraUsageWarned");
+export const HOST_VERSION_LATCH = Symbol.for("pi-account-manager.hostVersionWarned");
+
+/**
+ * The pi release this extension targets. Peer ranges cannot express this: pi supplies the
+ * bundled packages at load time, so the package manager never sees which pi binary runs.
+ */
+export const SUPPORTED_PI = "0.82";
 
 type LatchHolder = Record<symbol, true | undefined>;
 
@@ -142,6 +149,14 @@ export default async function (pi: ExtensionAPI) {
 	// the bundled factories know nothing about. Registered through `pi` rather than
 	// ctx.modelRegistry so pi refreshes the live model object after the swap.
 	pi.on("session_start", async (_event, ctx) => {
+		if (ctx.mode === "tui" && !latch[HOST_VERSION_LATCH] && !VERSION.startsWith(`${SUPPORTED_PI}.`)) {
+			latch[HOST_VERSION_LATCH] = true;
+			ctx.ui.notify(
+				`pi-account-manager targets pi ${SUPPORTED_PI}; this host is ${VERSION}. Named accounts may not work correctly.`,
+				"warning",
+			);
+		}
+
 		if (!loadError && snapshot.length > 0) {
 			const releaseOwned = (owned: Map<string, Provider>) => {
 				for (const [id, provider] of owned) if (stillOurs(ctx.modelRegistry, id, provider)) pi.unregisterProvider(id);
@@ -252,7 +267,9 @@ export default async function (pi: ExtensionAPI) {
 		await adoptNativeDefaultModel(provider, id);
 
 		const login = `/login ${id}`;
-		if (ctx.ui.getEditorText().trim() === "") {
+		// Raw emptiness, not trimmed: a fresh pi editor is exactly "", so a whitespace-only
+		// draft is real content and must be preserved like any other.
+		if (ctx.ui.getEditorText() === "") {
 			ctx.ui.setEditorText(login);
 			ctx.ui.notify(`Added ${id}. Submit the prepared command to sign in.`, "info");
 		} else {

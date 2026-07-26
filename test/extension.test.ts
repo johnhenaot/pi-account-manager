@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Account } from "../src/account.ts";
 import { USAGE } from "../src/command.ts";
-import { ANTHROPIC_EXTRA_USAGE_WARNING, ANTHROPIC_WARNING_LATCH, authState } from "../src/index.ts";
+import { ANTHROPIC_EXTRA_USAGE_WARNING, ANTHROPIC_WARNING_LATCH, authState, HOST_VERSION_LATCH, SUPPORTED_PI } from "../src/index.ts";
 import { EMPTY_LIST } from "../src/list.ts";
 import { loadAccounts, statePath } from "../src/state.ts";
 import {
@@ -23,6 +23,7 @@ let agentDir: string;
 beforeEach(async () => {
 	agentDir = await makeAgentDir();
 	delete (globalThis as Record<symbol, unknown>)[ANTHROPIC_WARNING_LATCH];
+	delete (globalThis as Record<symbol, unknown>)[HOST_VERSION_LATCH];
 });
 
 afterEach(async () => {
@@ -121,6 +122,14 @@ describe("/account add", () => {
 		expect(await loadAccounts(agentDir)).toEqual([work]);
 		expect(pi.registry.getProvider("anthropic@work")?.name).toBe("Anthropic (work)");
 		expect(pi.editor()).toBe("/login anthropic@work");
+	});
+
+	it("preserves a whitespace-only editor instead of treating it as empty", async () => {
+		// A fresh pi editor is exactly "", so whitespace is a real draft.
+		const pi = await start({ editorText: "  \n ", answers: ["Anthropic"] });
+		await pi.account("add work");
+		expect(pi.editor()).toBe("  \n ");
+		expect(pi.last().message).toContain("/login anthropic@work");
 	});
 
 	it("preserves a non-empty editor and shows the exact command instead", async () => {
@@ -445,6 +454,7 @@ describe("loading lifecycle", () => {
 describe("anthropic extra-usage warning", () => {
 	const clearLatch = () => {
 		delete (globalThis as Record<symbol, unknown>)[ANTHROPIC_WARNING_LATCH];
+	delete (globalThis as Record<symbol, unknown>)[HOST_VERSION_LATCH];
 	};
 
 	const authenticated = async (settings?: unknown) => {
@@ -600,6 +610,18 @@ describe("reload cleanup", () => {
 		await second.account("add work");
 		expect(second.last().type).toBe("info");
 		expect(await loadAccounts(agentDir)).toEqual([work]);
+	});
+});
+
+describe("host version notice", () => {
+	it("stays quiet on the supported pi release", async () => {
+		const pi = await start();
+		await pi.emit("session_start", { type: "session_start", reason: "startup" });
+		expect(pi.notifications.filter((n) => n.message.includes("targets pi"))).toEqual([]);
+	});
+
+	it("names the supported release so the check cannot silently drift", () => {
+		expect(SUPPORTED_PI).toBe("0.82");
 	});
 });
 

@@ -18,6 +18,7 @@ import {
 } from "./account.ts";
 import { buildAlias, bundledProvider } from "./alias.ts";
 import { parseCommand, resolveRemoveTarget, USAGE } from "./command.ts";
+import { adoptNativeDefaultModel, forgetDefaultModel } from "./default-model.ts";
 import { EMPTY_LIST, formatList } from "./list.ts";
 import { loadAccounts, mutateAccounts } from "./state.ts";
 
@@ -92,6 +93,7 @@ export default async function (pi: ExtensionAPI) {
 	try {
 		snapshot = await loadAccounts(agentDir);
 		registered = registerAll(pi, snapshot, bundledProvider);
+		await Promise.all(snapshot.map((account) => adoptNativeDefaultModel(account.provider, accountId(account))));
 	} catch (error) {
 		fail(error);
 	}
@@ -182,15 +184,14 @@ export default async function (pi: ExtensionAPI) {
 			return;
 		}
 
-		// Pi only auto-selects a model after login for its own built-in provider IDs, so an
-		// alias login ends with "no default model is configured". Say so before it happens.
+		await adoptNativeDefaultModel(provider, id);
+
 		const login = `/login ${id}`;
-		const thenPickAModel = "then pick a model with /model.";
 		if (ctx.ui.getEditorText().trim() === "") {
 			ctx.ui.setEditorText(login);
-			ctx.ui.notify(`Added ${id}. Submit the prepared command to sign in, ${thenPickAModel}`, "info");
+			ctx.ui.notify(`Added ${id}. Submit the prepared command to sign in.`, "info");
 		} else {
-			ctx.ui.notify(`Added ${id}. Run ${login} to sign in, ${thenPickAModel}`, "info");
+			ctx.ui.notify(`Added ${id}. Run ${login} to sign in.`, "info");
 		}
 	};
 
@@ -243,6 +244,7 @@ export default async function (pi: ExtensionAPI) {
 			return;
 		}
 
+		await forgetDefaultModel(id);
 		ctx.ui.notify(`Removed ${id}. Its credential is untouched; use /logout to remove that.`, "info");
 	};
 

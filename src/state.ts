@@ -67,16 +67,11 @@ export async function loadAccounts(agentDir: string): Promise<Account[]> {
 	return parseState(text);
 }
 
-async function writeState(agentDir: string, accounts: readonly Account[]): Promise<void> {
-	const target = statePath(agentDir);
-	const temp = `${target}.${process.pid}.tmp`;
+/** Writes the next state beside the real file without publishing it yet. */
+async function stageState(agentDir: string, accounts: readonly Account[]): Promise<string> {
+	const temp = `${statePath(agentDir)}.${process.pid}.tmp`;
 	await writeFile(temp, serializeState(accounts), "utf8");
-	try {
-		await rename(temp, target);
-	} catch (error) {
-		await rm(temp, { force: true });
-		throw error;
-	}
+	return temp;
 }
 
 /** Contention resolves or fails inside this window. */
@@ -125,16 +120,27 @@ export async function mutateAccounts(
 	commit?: (accounts: Account[]) => void,
 ): Promise<Account[]> {
 	return withLock(agentDir, async () => {
-		const current = await loadAccounts(agentDir);
+		let current: Account[];
+		try {
+			current = await loadAccounts(agentDir);
+		} catch (error) {
+			// A file that no longer parses differs from our snapshot just as much as a
+			// duplicate appearing does, and /reload is the recovery for both.
+			throw new Error(`${STALE_SNAPSHOT_MESSAGE} (${errorMessage(error)})`);
+		}
 		if (serializeState(current) !== serializeState(snapshot)) throw new Error(STALE_SNAPSHOT_MESSAGE);
+
+		// Staged, then committed, then published: another process must never load a state
+		// that this one is about to abandon, so the rename happens last.
 		const next = sortForPersistence(change(current));
-		await writeState(agentDir, next);
+		const staged = await stageState(agentDir, next);
 		try {
 			commit?.(next);
 		} catch (error) {
-			await writeState(agentDir, current);
+			await rm(staged, { force: true });
 			throw error;
 		}
+		await rename(staged, statePath(agentDir));
 		return next;
 	});
 }

@@ -1,4 +1,5 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Account, accountId, sortForPersistence } from "../src/account.ts";
@@ -8,6 +9,7 @@ import {
 	parseState,
 	serializeState,
 	STALE_SNAPSHOT_MESSAGE,
+	statePath,
 } from "../src/state.ts";
 import { cleanupAgentDir, makeAgentDir, readStateFile, writeStateFile } from "./helpers.ts";
 
@@ -94,7 +96,7 @@ describe("mutateAccounts", () => {
 		expect(JSON.parse(await readStateFile(agentDir))).toEqual({ version: 1, accounts: [] });
 	});
 
-	it("rolls the file back when the runtime half of the update fails", async () => {
+	it("never publishes the new state when the runtime half of the update fails", async () => {
 		await writeStateFile(agentDir, { version: 1, accounts: [] });
 		await expect(
 			mutateAccounts(
@@ -107,6 +109,55 @@ describe("mutateAccounts", () => {
 			),
 		).rejects.toThrow("registration failed");
 		expect(JSON.parse(await readStateFile(agentDir))).toEqual({ version: 1, accounts: [] });
+	});
+
+	it("leaves no staging file behind when the runtime half fails", async () => {
+		await writeStateFile(agentDir, { version: 1, accounts: [] });
+		await expect(
+			mutateAccounts(
+				agentDir,
+				[],
+				(accounts) => [...accounts, work],
+				() => {
+					throw new Error("registration failed");
+				},
+			),
+		).rejects.toThrow("registration failed");
+		const left = (await readdir(join(agentDir, "pi-account-manager"))).filter((f) => f.endsWith(".tmp"));
+		expect(left).toEqual([]);
+	});
+
+	it("keeps the old state readable to other processes while a commit is pending", async () => {
+		await writeStateFile(agentDir, { version: 1, accounts: [] });
+		let seenByAnotherProcess: Account[] | undefined;
+		await expect(
+			mutateAccounts(
+				agentDir,
+				[],
+				(accounts) => [...accounts, work],
+				() => {
+					// Stands in for a second pi process loading state mid-mutation.
+					seenByAnotherProcess = parseState(readFileSync(statePath(agentDir), "utf8"));
+					throw new Error("registration failed");
+				},
+			),
+		).rejects.toThrow("registration failed");
+		expect(seenByAnotherProcess, "tentative state must not be visible").toEqual([]);
+	});
+
+	it("maps an unparseable authoritative file to the /reload recovery path", async () => {
+		// The spec's own example of a semantic difference is a duplicate appearing, which
+		// fails the parse rather than the snapshot comparison.
+		await writeStateFile(agentDir, {
+			version: 1,
+			accounts: [work, { provider: "anthropic", name: "work" }],
+		});
+		await expect(mutateAccounts(agentDir, [], (accounts) => accounts)).rejects.toThrow(STALE_SNAPSHOT_MESSAGE);
+
+		await writeStateFile(agentDir, "{ broken");
+		const failure = mutateAccounts(agentDir, [], (accounts) => accounts);
+		await expect(failure).rejects.toThrow(STALE_SNAPSHOT_MESSAGE);
+		await expect(failure).rejects.toThrow("not valid JSON");
 	});
 
 	it("aborts with a /reload instruction when a record appeared behind our back", async () => {

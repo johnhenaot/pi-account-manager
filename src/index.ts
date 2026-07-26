@@ -301,13 +301,14 @@ export default async function (pi: ExtensionAPI) {
 				() => {
 					const ours = registered.get(id);
 					// Never unregister a provider this extension does not own.
-					if (stillOurs(ctx.modelRegistry, id, ours)) pi.unregisterProvider(id);
+					const unregistered = stillOurs(ctx.modelRegistry, id, ours);
+					if (unregistered) pi.unregisterProvider(id);
 					registered.delete(id);
 					return () => {
-						if (ours) {
-							pi.registerProvider(ours);
-							registered.set(id, ours);
-						}
+						// Re-register only what this commit actually removed, so a rollback cannot
+						// overwrite a provider that another extension owns.
+						if (unregistered && ours) pi.registerProvider(ours);
+						if (ours) registered.set(id, ours);
 					};
 				},
 			);

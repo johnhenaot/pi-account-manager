@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -5,7 +6,7 @@ import type { Account } from "../src/account.ts";
 import { USAGE } from "../src/command.ts";
 import { ANTHROPIC_EXTRA_USAGE_WARNING, ANTHROPIC_WARNING_LATCH, authState } from "../src/index.ts";
 import { EMPTY_LIST } from "../src/list.ts";
-import { loadAccounts } from "../src/state.ts";
+import { loadAccounts, statePath } from "../src/state.ts";
 import {
 	cleanupAgentDir,
 	harness,
@@ -286,6 +287,43 @@ describe("/account remove", () => {
 		await pi.account("remove anthropic@work");
 		expect(await loadAccounts(agentDir)).toEqual([]);
 		expect(pi.credentials.entries.has("anthropic@other")).toBe(true);
+	});
+
+	/**
+	 * The rollback only runs when publishing fails, which needs a rename that fails while the
+	 * read still succeeds. macOS `chflags uchg` gives exactly that, so this is darwin-only.
+	 */
+	it.skipIf(process.platform !== "darwin")(
+		"does not re-register over a foreign provider when publishing fails",
+		async () => {
+			const pi = await seeded([work]);
+			const foreign = stubProvider("anthropic@work");
+			pi.registry.registerProvider(foreign);
+			execFileSync("chflags", ["uchg", statePath(agentDir)]);
+			try {
+				await pi.account("remove anthropic@work");
+			} finally {
+				execFileSync("chflags", ["nouchg", statePath(agentDir)]);
+			}
+
+			expect(pi.last().type).toBe("error");
+			// The rollback must not resurrect our alias over the provider that owns the ID.
+			expect(pi.registry.getRegisteredNativeProvider("anthropic@work")).toBe(foreign);
+			expect(await loadAccounts(agentDir)).toEqual([work]);
+		},
+	);
+
+	it("leaves a foreign provider alone when removing the account behind its ID", async () => {
+		const pi = await seeded([work]);
+		const foreign = stubProvider("anthropic@work");
+		pi.registry.registerProvider(foreign);
+
+		await pi.account("remove anthropic@work");
+
+		// The account is forgotten, but the provider we do not own is untouched, and the
+		// rollback path is gated on the same flag so it cannot re-register over it either.
+		expect(await loadAccounts(agentDir)).toEqual([]);
+		expect(pi.registry.getRegisteredNativeProvider("anthropic@work")).toBe(foreign);
 	});
 
 	it("advises /reload rather than /logout when the account is already gone", async () => {

@@ -1,8 +1,16 @@
 import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { type Account, aliasId, isProviderId, isValidName, normalizeName, sortForPersistence } from "./account.ts";
+import {
+	type Account,
+	aliasId,
+	errorMessage,
+	isProviderId,
+	isValidName,
+	normalizeName,
+	sortForPersistence,
+} from "./account.ts";
 
-export const stateDir = (agentDir: string): string => join(agentDir, "pi-account-manager");
+const stateDir = (agentDir: string): string => join(agentDir, "pi-account-manager");
 export const statePath = (agentDir: string): string => join(stateDir(agentDir), "accounts.json");
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -54,7 +62,7 @@ export async function loadAccounts(agentDir: string): Promise<Account[]> {
 	} catch (error) {
 		// A missing file means no named accounts yet; anything else is a real load error.
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-		throw new Error(`Cannot read ${path}: ${error instanceof Error ? error.message : String(error)}`);
+		throw new Error(`Cannot read ${path}: ${errorMessage(error)}`);
 	}
 	return parseState(text);
 }

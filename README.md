@@ -74,9 +74,10 @@ Names are trimmed and lowercased, and must be 1–32 characters of `a-z`, `0-9`,
 
 ## Anthropic subscription usage
 
-The first time you pick an `anthropic@<name>` model, pi warns you that usage through a
-third-party harness is billed per token against extra usage rather than your Claude plan
-limits. To silence it, set this in `/settings`:
+The first time you use an `anthropic@<name>` model in a session — whether you pick it or
+resume onto it — pi warns you that usage through a third-party harness is billed per token
+against extra usage rather than your Claude plan limits. To silence it, set this in
+`/settings`:
 
 ```json
 { "warnings": { "anthropicExtraUsage": false } }

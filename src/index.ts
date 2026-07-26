@@ -9,6 +9,7 @@ import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 import {
 	type Account,
 	accountId,
+	errorMessage,
 	isValidName,
 	NAME_RULE,
 	normalizeName,
@@ -25,9 +26,16 @@ import { loadAccounts, mutateAccounts } from "./state.ts";
 export const ANTHROPIC_EXTRA_USAGE_WARNING =
 	"Anthropic subscription auth is active. Third-party harness usage draws from extra usage and is billed per token, not your Claude plan limits. Manage extra usage at https://claude.ai/settings/usage. Disable this warning in /settings.";
 
-export type AuthState = "authenticated" | "not authenticated" | "status unavailable";
+/**
+ * `/reload` re-runs the extension factory in the same process, so a factory-local latch
+ * would let the once-per-process warning fire again. Keyed on globalThis so it survives
+ * both a new factory closure and a re-evaluated module. Exported so tests can clear it.
+ */
+export const ANTHROPIC_WARNING_LATCH = Symbol.for("pi-account-manager.anthropicExtraUsageWarned");
 
-const describe = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+type LatchHolder = Record<symbol, true | undefined>;
+
+export type AuthState = "authenticated" | "not authenticated" | "status unavailable";
 
 /** Reports only what pi reports. An unregistered alias or any failure is "status unavailable". */
 export function authState(registry: ModelRegistry, id: string): AuthState {
@@ -57,7 +65,14 @@ interface Registrar {
 	unregisterProvider(name: string): void;
 }
 
-/** Builds every alias before registering any, then rolls back if a registration fails. */
+/**
+ * Builds every alias before registering any, so a base that cannot back an alias fails
+ * before anything is registered, and unwinds if a registration itself throws.
+ *
+ * Note: at bootstrap pi queues these registrations and drains them later with a per-item
+ * try/catch that logs and continues, so the unwind below only runs on the session_start
+ * path. Bootstrap atomicity is pi's to give, not ours.
+ */
 function registerAll(
 	registrar: Registrar,
 	accounts: readonly Account[],
@@ -82,12 +97,26 @@ export default async function (pi: ExtensionAPI) {
 	let snapshot: Account[] = [];
 	let registered: string[] = [];
 	let loadError: string | undefined;
-	let warned = false;
+
+	const latch = globalThis as unknown as LatchHolder;
 
 	const fail = (error: unknown) => {
-		loadError = `Named accounts are unavailable: ${describe(error)}`;
+		loadError = `Named accounts are unavailable: ${errorMessage(error)}`;
 		snapshot = [];
 		registered = [];
+	};
+
+	const isOwnAnthropicAlias = (providerId: string): boolean =>
+		snapshot.some((account) => account.provider === "anthropic" && accountId(account) === providerId);
+
+	/** Pi never warns for alias providers itself, and never emits model_select on restore. */
+	const maybeWarnAnthropic = (ctx: ExtensionContext, providerId: string | undefined) => {
+		if (ctx.mode !== "tui" || latch[ANTHROPIC_WARNING_LATCH]) return;
+		if (!providerId || !isOwnAnthropicAlias(providerId)) return;
+		if (authState(ctx.modelRegistry, providerId) !== "authenticated") return;
+		if (!anthropicWarningEnabled(ctx)) return;
+		latch[ANTHROPIC_WARNING_LATCH] = true;
+		ctx.ui.notify(ANTHROPIC_EXTRA_USAGE_WARNING, "warning");
 	};
 
 	try {
@@ -98,30 +127,46 @@ export default async function (pi: ExtensionAPI) {
 		fail(error);
 	}
 
-	// Rebuild against the effective registry, which includes any models.json overlay that the
-	// bundled factories know nothing about. All-or-none, like the bootstrap.
-	pi.on("session_start", (_event, ctx) => {
-		if (loadError || snapshot.length === 0) return;
-		const previous = registered;
-		try {
-			registered = registerAll(ctx.modelRegistry, snapshot, (provider) => ctx.modelRegistry.getProvider(provider));
-		} catch (error) {
-			for (const id of previous) ctx.modelRegistry.unregisterProvider(id);
-			fail(error);
+	// Rebuild against the effective registry, which includes any models.json overlay that
+	// the bundled factories know nothing about. Registered through `pi` rather than
+	// ctx.modelRegistry so pi refreshes the live model object after the swap.
+	pi.on("session_start", async (_event, ctx) => {
+		if (!loadError && snapshot.length > 0) {
+			const mine = new Set(registered);
+			const taken = snapshot
+				.map(accountId)
+				.filter((id) => !mine.has(id) && ctx.modelRegistry.getProvider(id) !== undefined);
+			if (taken.length > 0) {
+				for (const id of registered) pi.unregisterProvider(id);
+				fail(new Error(`provider ID "${taken[0]}" is already in use.`));
+			} else {
+				const previous = registered;
+				try {
+					registered = registerAll(pi, snapshot, (provider) => ctx.modelRegistry.getProvider(provider));
+				} catch (error) {
+					for (const id of previous) pi.unregisterProvider(id);
+					fail(error);
+				}
+			}
+		}
+
+		// A restored session assigns its model directly, with no model_select event, so
+		// this is the only place a resumed alias model can be warned about.
+		if (ctx.model && isOwnAnthropicAlias(ctx.model.provider)) {
+			await ctx.modelRegistry.refresh();
+			maybeWarnAnthropic(ctx, ctx.model.provider);
 		}
 	});
 
-	pi.on("model_select", (event, ctx) => {
-		if (ctx.mode !== "tui" || warned) return;
-		const isOwnAnthropicAlias = snapshot.some(
-			(account) => account.provider === "anthropic" && accountId(account) === event.model.provider,
-		);
-		if (!isOwnAnthropicAlias) return;
-		if (authState(ctx.modelRegistry, event.model.provider) !== "authenticated") return;
-		if (!anthropicWarningEnabled(ctx)) return;
-		warned = true;
-		ctx.ui.notify(ANTHROPIC_EXTRA_USAGE_WARNING, "warning");
+	// Pi reuses one ModelRuntime across /reload but gives the reloaded extension a fresh
+	// closure, so without this the previous instance's aliases stay registered forever.
+	pi.on("session_shutdown", (event, ctx) => {
+		if (event.reason !== "reload") return;
+		for (const id of registered) ctx.modelRegistry.unregisterProvider(id);
+		registered = [];
 	});
+
+	pi.on("model_select", (event, ctx) => maybeWarnAnthropic(ctx, event.model?.provider));
 
 	const list = (ctx: ExtensionCommandContext) => {
 		if (loadError) {
@@ -165,7 +210,7 @@ export default async function (pi: ExtensionAPI) {
 		try {
 			alias = buildAlias(ctx.modelRegistry.getProvider(provider), account);
 		} catch (error) {
-			ctx.ui.notify(`Cannot add ${id}: ${describe(error)}`, "error");
+			ctx.ui.notify(`Cannot add ${id}: ${errorMessage(error)}`, "error");
 			return;
 		}
 
@@ -175,12 +220,12 @@ export default async function (pi: ExtensionAPI) {
 				snapshot,
 				(accounts) => [...accounts, account],
 				() => {
-					ctx.modelRegistry.registerProvider(alias);
+					pi.registerProvider(alias);
 					registered = [...registered, id];
 				},
 			);
 		} catch (error) {
-			ctx.ui.notify(`Cannot add ${id}: ${describe(error)}`, "error");
+			ctx.ui.notify(`Cannot add ${id}: ${errorMessage(error)}`, "error");
 			return;
 		}
 
@@ -235,12 +280,12 @@ export default async function (pi: ExtensionAPI) {
 				snapshot,
 				(accounts) => accounts.filter((candidate) => accountId(candidate) !== id),
 				() => {
-					ctx.modelRegistry.unregisterProvider(id);
+					pi.unregisterProvider(id);
 					registered = registered.filter((candidate) => candidate !== id);
 				},
 			);
 		} catch (error) {
-			ctx.ui.notify(`Cannot remove ${id}: ${describe(error)}`, "error");
+			ctx.ui.notify(`Cannot remove ${id}: ${errorMessage(error)}`, "error");
 			return;
 		}
 

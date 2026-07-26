@@ -1,14 +1,18 @@
+import { execFile } from "node:child_process";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
-import { getPackageDir } from "@earendil-works/pi-coding-agent";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { adoptNativeDefaultModel } from "../src/default-model.ts";
+import { adoptNativeDefaultModel, modelResolverSpecifier } from "../src/default-model.ts";
 import { cleanupAgentDir, harness, makeAgentDir, writeStateFile } from "./helpers.ts";
+
+const run = promisify(execFile);
 
 /** The same internal map pi reads when auto-selecting a model after /login. */
 const piDefaultModelMap = async (): Promise<Record<string, string>> => {
-	const specifier = pathToFileURL(join(getPackageDir(), "dist", "core", "model-resolver.js")).href;
-	const module = (await import(specifier)) as { defaultModelPerProvider: Record<string, string> };
+	const module = (await import(modelResolverSpecifier())) as { defaultModelPerProvider: Record<string, string> };
 	return module.defaultModelPerProvider;
 };
 
@@ -31,6 +35,32 @@ const track = (id: string) => {
 };
 
 describe("adoptNativeDefaultModel", () => {
+	it("resolves to a model-resolver module and reaches pi's real map", async () => {
+		const specifier = modelResolverSpecifier();
+		expect(specifier.startsWith("file://")).toBe(true);
+		expect(specifier.endsWith("/dist/core/model-resolver.js")).toBe(true);
+		await expect(piDefaultModelMap()).resolves.toMatchObject({ anthropic: expect.any(String) });
+	});
+
+	it("derives the specifier from the module graph, never from the environment", async () => {
+		// getPackageDir() honours $PI_PACKAGE_DIR verbatim, and this string becomes an
+		// executable module specifier — so the resolved path must not follow the env.
+		// Pi always has import.meta.resolve, so this branch is the one it takes.
+		const resolve = () => "file:///real/pi/dist/index.js";
+		const before = modelResolverSpecifier(resolve);
+		process.env.PI_PACKAGE_DIR = "/attacker-controlled";
+		try {
+			expect(modelResolverSpecifier(resolve)).toBe(before);
+			expect(before).toBe("file:///real/pi/dist/core/model-resolver.js");
+		} finally {
+			delete process.env.PI_PACKAGE_DIR;
+		}
+	});
+
+	it("falls back to the package directory when the runtime has no resolver", () => {
+		expect(modelResolverSpecifier(undefined).endsWith("/dist/core/model-resolver.js")).toBe(true);
+	});
+
 	it("reaches pi's real map and inherits the native provider's default", async () => {
 		const map = await piDefaultModelMap();
 		expect(map.anthropic).toBeTruthy();
@@ -87,26 +117,39 @@ describe("adoptNativeDefaultModel", () => {
 		expect(map[id]).toBe("already-chosen");
 	});
 
-	it("is applied to every account at load", async () => {
-		const map = await piDefaultModelMap();
-		await writeStateFile(agentDir, {
-			version: 1,
-			accounts: [
-				{ provider: "anthropic", name: "one" },
-				{ provider: "openai-codex", name: "two" },
-			],
-		});
-		await harness(agentDir);
-		track("anthropic@one");
-		track("openai-codex@two");
-		expect(map["anthropic@one"]).toBe(map.anthropic);
-		expect(map["openai-codex@two"]).toBe(map["openai-codex"]);
-	});
-
 	it("leaves no entry behind when loading fails", async () => {
 		const map = await piDefaultModelMap();
 		await writeStateFile(agentDir, "{ broken");
 		await harness(agentDir);
 		expect("anthropic@work" in map).toBe(false);
 	});
+
+	/**
+	 * The in-process tests above share a warm module memo, which is exactly what hid the
+	 * original bug: concurrent adoption on a cold start dropped every account but the
+	 * first. Only a fresh process can catch a regression here.
+	 */
+	it("adopts every account on a cold start, not just the first", async () => {
+		const moduleUrl = new URL("../src/default-model.ts", import.meta.url).href;
+		const resolverPath = fileURLToPath(modelResolverSpecifier());
+		const dir = await mkdtemp(join(tmpdir(), "pi-cold-start-"));
+		const script = join(dir, "cold-start.ts");
+		await writeFile(
+			script,
+			`import { adoptNativeDefaultModel } from ${JSON.stringify(moduleUrl)};
+const { defaultModelPerProvider: map } = await import(${JSON.stringify(resolverPath)});
+await Promise.all([
+	adoptNativeDefaultModel("anthropic", "anthropic@one"),
+	adoptNativeDefaultModel("openai-codex", "openai-codex@two"),
+]);
+console.log(JSON.stringify({ one: map["anthropic@one"], two: map["openai-codex@two"] }));
+`,
+			"utf8",
+		);
+
+		const { stdout } = await run(process.execPath, ["--experimental-strip-types", script]);
+		const result = JSON.parse(stdout.trim().split("\n").at(-1) as string);
+		expect(result.one).toBeTruthy();
+		expect(result.two, "second concurrent account must also get a default").toBeTruthy();
+	}, 30_000);
 });

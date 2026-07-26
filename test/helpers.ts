@@ -146,7 +146,6 @@ export interface Notification {
 export interface HarnessOptions {
 	editorText?: string;
 	answers?: (string | undefined)[];
-	model?: Model<Api>;
 	/** Make pi reject this provider ID, to exercise registration rollback. */
 	rejectProviderId?: string;
 }
@@ -191,7 +190,7 @@ export async function harness(agentDir: string, options: HarnessOptions = {}) {
 		mode: "tui" as string,
 		cwd: agentDir,
 		modelRegistry: guardedRegistry,
-		model: options.model,
+		model: undefined as Model<Api> | undefined,
 		isProjectTrusted: () => true,
 	};
 

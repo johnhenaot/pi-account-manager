@@ -10,27 +10,57 @@ import type { ProviderId } from "./account.ts";
  * ends in "no default model is configured" instead of a selected model.
  *
  * The map is a mutable object, but it is not on pi's public export surface, so it has to
- * be reached by module path. ESM caches by resolved path, so this is the same object pi
- * itself reads. Each alias inherits whatever default its native provider has, which is
- * why nothing here hardcodes a model ID.
+ * be reached by module path. Each alias inherits whatever default its native provider
+ * has, which is why nothing here hardcodes a model ID.
  *
  * Best effort by design: if pi moves the module, aliases simply keep the old message.
  */
 type DefaultModelMap = Record<string, string>;
 
-let loaded: DefaultModelMap | null | undefined;
+export type Resolver = ((specifier: string) => string) | undefined;
 
-async function defaultModelMap(): Promise<DefaultModelMap | null> {
-	if (loaded !== undefined) return loaded;
-	loaded = null;
-	try {
-		const specifier = pathToFileURL(join(getPackageDir(), "dist", "core", "model-resolver.js")).href;
-		const map = ((await import(specifier)) as { defaultModelPerProvider?: unknown }).defaultModelPerProvider;
-		if (map && typeof map === "object") loaded = map as DefaultModelMap;
-	} catch {
-		// Pi's internals moved. Aliases keep pi's "use /model to select a model" message.
+/** Detached so callers can substitute it; absent under bundlers that stub import.meta. */
+const moduleGraphResolver: Resolver =
+	typeof import.meta.resolve === "function" ? (specifier) => import.meta.resolve(specifier) : undefined;
+
+/**
+ * Prefers the module graph over `getPackageDir()`, which returns `$PI_PACKAGE_DIR`
+ * verbatim — this string becomes an executable module specifier, so it must not be
+ * environment-controlled. Pi aliases the bare specifier to the running pi's own dist, so
+ * the import lands on the same module instance pi reads even when the extension has its
+ * own copy of the package installed.
+ *
+ * The `getPackageDir()` fallback exists only for runtimes without `import.meta.resolve`
+ * (notably vitest's SSR transform); pi itself always takes the first branch.
+ */
+export function modelResolverSpecifier(resolve: Resolver = moduleGraphResolver): string {
+	if (resolve) {
+		try {
+			return new URL("core/model-resolver.js", resolve("@earendil-works/pi-coding-agent")).href;
+		} catch {
+			// Fall through to the package-directory fallback.
+		}
 	}
-	return loaded;
+	return pathToFileURL(join(getPackageDir(), "dist", "core", "model-resolver.js")).href;
+}
+
+// Memoize the promise, not the resolved value: index.ts adopts every account
+// concurrently, and memoizing the value lets later callers observe the still-loading
+// state and skip their write.
+let pending: Promise<DefaultModelMap | null> | undefined;
+
+function defaultModelMap(): Promise<DefaultModelMap | null> {
+	pending ??= (async () => {
+		try {
+			const module = (await import(modelResolverSpecifier())) as { defaultModelPerProvider?: unknown };
+			const map = module.defaultModelPerProvider;
+			if (map && typeof map === "object") return map as DefaultModelMap;
+		} catch {
+			// Pi's internals moved. Aliases keep pi's "use /model to select a model" message.
+		}
+		return null;
+	})();
+	return pending;
 }
 
 /** Give `aliasId` the same post-login default model as its native provider. */

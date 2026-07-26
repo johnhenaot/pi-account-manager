@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Account } from "../src/account.ts";
 import { USAGE } from "../src/command.ts";
-import { ANTHROPIC_EXTRA_USAGE_WARNING, authState } from "../src/index.ts";
+import { ANTHROPIC_EXTRA_USAGE_WARNING, ANTHROPIC_WARNING_LATCH, authState } from "../src/index.ts";
 import { EMPTY_LIST } from "../src/list.ts";
 import { loadAccounts } from "../src/state.ts";
 import {
@@ -21,6 +21,7 @@ let agentDir: string;
 
 beforeEach(async () => {
 	agentDir = await makeAgentDir();
+	delete (globalThis as Record<symbol, unknown>)[ANTHROPIC_WARNING_LATCH];
 });
 
 afterEach(async () => {
@@ -193,7 +194,7 @@ describe("/account remove", () => {
 	const seeded = async (accounts: Account[], options: HarnessOptions = {}) => {
 		await writeStateFile(agentDir, { version: 1, accounts });
 		const pi = await start(options);
-		pi.emit("session_start", { type: "session_start", reason: "startup" });
+		await pi.emit("session_start", { type: "session_start", reason: "startup" });
 		await pi.runtime.refresh({ allowNetwork: false });
 		return pi;
 	};
@@ -310,7 +311,7 @@ describe("loading lifecycle", () => {
 		await writeStateFile(agentDir, { version: 1, accounts: [work] });
 		const pi = await start();
 		const bootstrapped = pi.registry.getProvider("anthropic@work");
-		pi.emit("session_start", { type: "session_start", reason: "startup" });
+		await pi.emit("session_start", { type: "session_start", reason: "startup" });
 		const replaced = pi.registry.getProvider("anthropic@work");
 		expect(replaced).toBeDefined();
 		expect(replaced).not.toBe(bootstrapped);
@@ -349,7 +350,7 @@ describe("loading lifecycle", () => {
 		expect(pi.registry.getProvider("anthropic@work")).toBeDefined();
 
 		pi.rejectProvider("openai-codex@personal");
-		pi.emit("session_start", { type: "session_start", reason: "reload" });
+		await pi.emit("session_start", { type: "session_start", reason: "reload" });
 
 		// Neither the replacement nor the bootstrap alias may survive.
 		expect(pi.registry.getProvider("anthropic@work")).toBeUndefined();
@@ -381,6 +382,10 @@ describe("loading lifecycle", () => {
 });
 
 describe("anthropic extra-usage warning", () => {
+	const clearLatch = () => {
+		delete (globalThis as Record<symbol, unknown>)[ANTHROPIC_WARNING_LATCH];
+	};
+
 	const authenticated = async (settings?: unknown) => {
 		if (settings !== undefined) await writeFile(join(agentDir, "settings.json"), JSON.stringify(settings), "utf8");
 		await writeStateFile(agentDir, {
@@ -388,7 +393,7 @@ describe("anthropic extra-usage warning", () => {
 			accounts: [work, { provider: "openai-codex", name: "personal" }],
 		});
 		const pi = await start();
-		pi.emit("session_start", { type: "session_start", reason: "startup" });
+		await pi.emit("session_start", { type: "session_start", reason: "startup" });
 		for (const id of ["anthropic@work", "openai-codex@personal"]) {
 			await pi.credentials.modify(id, async () => oauthCredential());
 		}
@@ -396,27 +401,63 @@ describe("anthropic extra-usage warning", () => {
 		return pi;
 	};
 
+	const modelOf = (pi: Awaited<ReturnType<typeof harness>>, provider: string) =>
+		pi.registry.getAll().find((model) => model.provider === provider);
+
 	const select = (pi: Awaited<ReturnType<typeof harness>>, provider: string, source = "set") =>
-		pi.emit("model_select", {
-			type: "model_select",
-			source,
-			model: pi.registry.getAll().find((model) => model.provider === provider),
-		});
+		pi.emit("model_select", { type: "model_select", source, model: modelOf(pi, provider) });
 
 	it("warns once per process with the exact text", async () => {
 		const pi = await authenticated();
 		select(pi, "anthropic@work");
 		expect(pi.last()).toEqual({ message: ANTHROPIC_EXTRA_USAGE_WARNING, type: "warning" });
 		const count = pi.notifications.length;
-		select(pi, "anthropic@work", "restore");
+		select(pi, "anthropic@work");
 		select(pi, "anthropic@work", "cycle");
 		expect(pi.notifications).toHaveLength(count);
 	});
 
-	it("warns on restore too", async () => {
-		const pi = await authenticated();
-		select(pi, "anthropic@work", "restore");
-		expect(pi.last().message).toBe(ANTHROPIC_EXTRA_USAGE_WARNING);
+	/**
+	 * Pi never emits model_select for a restored session, so the warning has to come from
+	 * session_start reading ctx.model. Asserting a synthetic source: "restore" event would
+	 * only test the mock.
+	 */
+	it("warns for a session restored onto an alias model", async () => {
+		await writeStateFile(agentDir, { version: 1, accounts: [work] });
+		const pi = await start();
+		await pi.credentials.modify("anthropic@work", async () => oauthCredential());
+		await pi.runtime.refresh({ allowNetwork: false });
+
+		pi.setModel(modelOf(pi, "anthropic@work"));
+		await pi.emit("session_start", { type: "session_start", reason: "resume" });
+		expect(pi.last()).toEqual({ message: ANTHROPIC_EXTRA_USAGE_WARNING, type: "warning" });
+	});
+
+	it("stays quiet on restore for an unauthenticated or native model", async () => {
+		await writeStateFile(agentDir, { version: 1, accounts: [work] });
+		const pi = await start();
+		await pi.runtime.refresh({ allowNetwork: false });
+
+		pi.setModel(modelOf(pi, "anthropic@work"));
+		await pi.emit("session_start", { type: "session_start", reason: "resume" });
+		expect(pi.notifications).toHaveLength(0);
+
+		pi.setModel(pi.registry.getAll().find((model) => model.provider === "anthropic"));
+		await pi.emit("session_start", { type: "session_start", reason: "resume" });
+		expect(pi.notifications).toHaveLength(0);
+	});
+
+	it("stays latched across a reload in the same process", async () => {
+		const first = await authenticated();
+		select(first, "anthropic@work");
+		expect(first.last().message).toBe(ANTHROPIC_EXTRA_USAGE_WARNING);
+
+		// /reload re-runs the factory; the latch must outlive the closure.
+		const second = await start();
+		await second.credentials.modify("anthropic@work", async () => oauthCredential());
+		await second.runtime.refresh({ allowNetwork: false });
+		select(second, "anthropic@work");
+		expect(second.notifications).toHaveLength(0);
 	});
 
 	it("stays quiet for other providers and for unauthenticated aliases", async () => {
@@ -435,10 +476,12 @@ describe("anthropic extra-usage warning", () => {
 		select(off, "anthropic@work");
 		expect(off.notifications).toHaveLength(0);
 
+		clearLatch();
 		const on = await authenticated({ warnings: { anthropicExtraUsage: true } });
 		select(on, "anthropic@work");
 		expect(on.last().message).toBe(ANTHROPIC_EXTRA_USAGE_WARNING);
 
+		clearLatch();
 		const unset = await authenticated({ warnings: {} });
 		select(unset, "anthropic@work");
 		expect(unset.last().message).toBe(ANTHROPIC_EXTRA_USAGE_WARNING);
@@ -455,5 +498,62 @@ describe("anthropic extra-usage warning", () => {
 		pi.setMode("rpc");
 		select(pi, "anthropic@work");
 		expect(pi.notifications).toHaveLength(0);
+	});
+});
+
+describe("reload cleanup", () => {
+	it("unregisters this instance's aliases on session_shutdown for a reload", async () => {
+		await writeStateFile(agentDir, {
+			version: 1,
+			accounts: [work, { provider: "openai-codex", name: "personal" }],
+		});
+		const pi = await start();
+		expect(pi.registry.getProvider("anthropic@work")).toBeDefined();
+
+		await pi.emit("session_shutdown", { type: "session_shutdown", reason: "reload" });
+		expect(pi.registry.getProvider("anthropic@work")).toBeUndefined();
+		expect(pi.registry.getProvider("openai-codex@personal")).toBeUndefined();
+		// Native providers are untouched.
+		expect(pi.registry.getProvider("anthropic")?.id).toBe("anthropic");
+	});
+
+	it("keeps aliases registered for shutdown reasons that reuse the extension", async () => {
+		await writeStateFile(agentDir, { version: 1, accounts: [work] });
+		const pi = await start();
+		for (const reason of ["quit", "new", "resume", "fork"]) {
+			await pi.emit("session_shutdown", { type: "session_shutdown", reason });
+			expect(pi.registry.getProvider("anthropic@work"), reason).toBeDefined();
+		}
+	});
+
+	it("lets a removed account's name be re-added after a reload", async () => {
+		await writeStateFile(agentDir, { version: 1, accounts: [work] });
+		const first = await start();
+		await first.emit("session_shutdown", { type: "session_shutdown", reason: "reload" });
+
+		// Another process removed the account; this process reloads into the new state.
+		await writeStateFile(agentDir, { version: 1, accounts: [] });
+		const second = await harness(agentDir, { answers: ["Anthropic"] });
+		await second.emit("session_start", { type: "session_start", reason: "reload" });
+
+		await second.account("add work");
+		expect(second.last().type).toBe("info");
+		expect(await loadAccounts(agentDir)).toEqual([work]);
+	});
+});
+
+describe("provider ID ownership at session_start", () => {
+	it("refuses to take over an alias ID owned by someone else", async () => {
+		await writeStateFile(agentDir, { version: 1, accounts: [work] });
+		const pi = await start();
+		// Simulate a reloaded instance whose ID is held by a foreign provider.
+		await pi.emit("session_shutdown", { type: "session_shutdown", reason: "reload" });
+		pi.registry.registerProvider(stubProvider("anthropic@work"));
+
+		await pi.emit("session_start", { type: "session_start", reason: "reload" });
+		expect(pi.registry.getProvider("anthropic@work")?.name).toBe("anthropic@work");
+		await pi.account("");
+		expect(pi.last().type).toBe("error");
+		expect(pi.last().message).toContain("already in use");
 	});
 });

@@ -10,6 +10,9 @@ export interface Account {
 	name: string;
 }
 
+export const errorMessage = (error: unknown): string =>
+	error instanceof Error ? error.message : String(error);
+
 const NAME_PATTERN = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 
 export const NAME_RULE = 'Use 1-32 characters from a-z, 0-9, "_" and "-", starting with a letter or digit.';

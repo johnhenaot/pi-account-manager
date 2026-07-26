@@ -137,6 +137,14 @@ export default async function (pi: ExtensionAPI) {
 		ctx.ui.notify(ANTHROPIC_EXTRA_USAGE_WARNING, "warning");
 	};
 
+	// Bootstrap registration is unconditional by necessity: ExtensionAPI exposes no provider
+	// lookup, and pi queues these calls and drains them itself, so there is no point at which
+	// this extension holds a registry and has not yet registered. If an earlier-loaded
+	// extension already owns one of these IDs, pi's last-writer-wins registry replaces it and
+	// the overwrite leaves no trace to detect at session_start. Registering later instead
+	// would forfeit startup model selection (findInitialModel precedes session_start) and
+	// `pi --list-models`, so the collision is accepted and documented rather than traded for
+	// those. Ownership *is* enforced from session_start onward, where a registry exists.
 	try {
 		snapshot = await loadAccounts(agentDir);
 		registered = registerAll(pi, snapshot, bundledProvider);

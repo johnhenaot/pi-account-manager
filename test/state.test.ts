@@ -166,6 +166,22 @@ describe("mutateAccounts", () => {
 		expect(left).toEqual([]);
 	});
 
+	it("surfaces a failed rollback instead of hiding it behind the publish error", async () => {
+		await expect(
+			mutateAccounts(
+				agentDir,
+				[],
+				(accounts) => [...accounts, work],
+				() => {
+					mkdirSync(statePath(agentDir), { recursive: true });
+					return () => {
+						throw new Error("unregister failed");
+					};
+				},
+			),
+		).rejects.toThrow(/unregister failed[\s\S]*\/reload|\/reload[\s\S]*unregister failed/);
+	});
+
 	it("maps an unparseable authoritative file to the /reload recovery path", async () => {
 		// The spec's own example of a semantic difference is a duplicate appearing, which
 		// fails the parse rather than the snapshot comparison.

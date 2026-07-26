@@ -149,12 +149,20 @@ export async function mutateAccounts(
 		} catch (error) {
 			// Publishing failed after the runtime half succeeded, so put the runtime back
 			// rather than leaving it ahead of the file.
+			let rollbackError: unknown;
 			try {
 				undoCommit?.();
-			} catch {
-				// The original failure is the useful one to report.
+			} catch (undoFailure) {
+				rollbackError = undoFailure;
 			}
 			await rm(staged, { force: true });
+			if (rollbackError !== undefined) {
+				// The file is authoritative and was never published, so a reload rebuilds
+				// runtime state from it. Report both failures rather than hiding one.
+				throw new Error(
+					`${errorMessage(error)}. Rolling back the runtime change also failed: ${errorMessage(rollbackError)}. Run /reload to resync.`,
+				);
+			}
 			throw error;
 		}
 		return next;

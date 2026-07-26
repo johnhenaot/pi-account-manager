@@ -3,3 +3,6 @@
 .pi-subagents/artifacts/
 .worktrees/
 node_modules/
+
+# Local design/spec notes, not part of the extension
+docs/superpowers/

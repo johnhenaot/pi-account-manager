@@ -2,7 +2,6 @@ import type { Api, Model, Provider } from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { type Account, aliasDisplayName, aliasId, type ProviderId } from "./account.ts";
 
-/** Pi's own bundled factories, for the bootstrap that runs before any session exists. */
 export function bundledProvider(provider: ProviderId): Provider | undefined {
 	return builtinProviders().find((candidate) => candidate.id === provider);
 }
@@ -23,10 +22,9 @@ export function buildAlias(base: Provider | undefined, account: Account): Provid
 		name: aliasDisplayName(account.provider, account.name),
 		baseUrl: base.baseUrl,
 		headers: base.headers,
-		// Dropping `apiKey` is the isolation: pi keys credentials by provider ID, so the alias
-		// can only ever reach its own OAuth token, never the native key or an ambient one.
+		// Omitting `apiKey` is the isolation: the alias can only reach its own OAuth token,
+		// never the native key or an ambient credential.
 		auth: { oauth },
-		// Delegated rather than snapshotted, so a native catalog change needs no rebuild.
 		getModels: () => reprovision(base.getModels(), id),
 		filterModels:
 			base.filterModels &&
@@ -36,8 +34,8 @@ export function buildAlias(base: Provider | undefined, account: Account): Provid
 				);
 				return models.filter((model) => kept.has(model.id));
 			}),
-		// The model still carries `provider: <alias id>`, which is what makes pi attribute every
-		// stream event, assistant message, and session entry to this account.
+		// The model keeps `provider: <alias id>`, which is what makes pi attribute every stream
+		// event, message, and session entry to this account.
 		stream: (model, context, options) => base.stream(model, context, options),
 		streamSimple: (model, context, options) => base.streamSimple(model, context, options),
 	};

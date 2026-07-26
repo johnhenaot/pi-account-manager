@@ -60,29 +60,23 @@ export async function loadAccounts(agentDir: string): Promise<Account[]> {
 	try {
 		text = await readFile(path, "utf8");
 	} catch (error) {
-		// A missing file means no named accounts yet; anything else is a real load error.
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
 		throw new Error(`Cannot read ${path}: ${errorMessage(error)}`);
 	}
 	return parseState(text);
 }
 
-/** Writes the next state beside the real file without publishing it yet. */
 async function stageState(agentDir: string, accounts: readonly Account[]): Promise<string> {
 	const temp = `${statePath(agentDir)}.${process.pid}.tmp`;
 	await writeFile(temp, serializeState(accounts), "utf8");
 	return temp;
 }
 
-/** Contention resolves or fails inside this window. */
 export const LOCK_TIMEOUT_MS = 5000;
 export const STALE_SNAPSHOT_MESSAGE = "named accounts changed in another process. Run /reload, then try again.";
 
-/**
- * The lock closes the read-modify-write window below, which is the only thing standing
- * between two simultaneous writers and a silently lost update. Atomic rename covers
- * partial reads on its own.
- */
+// The lock exists only to close the read-modify-write window below; the atomic rename
+// already covers partial reads.
 async function withLock<T>(agentDir: string, fn: () => Promise<T>): Promise<T> {
 	const dir = stateDir(agentDir);
 	await mkdir(dir, { recursive: true });
@@ -109,11 +103,8 @@ async function withLock<T>(agentDir: string, fn: () => Promise<T>): Promise<T> {
 	}
 }
 
-/**
- * `commit` is the runtime half of the update; it returns its own inverse, which runs if
- * publishing the file then fails. Persistent and runtime state therefore end up both
- * changed or both unchanged.
- */
+/** `commit` returns its own inverse, run if publishing then fails, so the persistent and
+ * runtime halves always move together. */
 export async function mutateAccounts(
 	agentDir: string,
 	snapshot: readonly Account[],
@@ -125,14 +116,12 @@ export async function mutateAccounts(
 		try {
 			current = await loadAccounts(agentDir);
 		} catch (error) {
-			// A file that no longer parses differs from our snapshot just as much as a
-			// duplicate appearing does, and /reload is the recovery for both.
+			// An unparseable file has drifted as surely as a duplicate appearing; same recovery.
 			throw new Error(`${STALE_SNAPSHOT_MESSAGE} (${errorMessage(error)})`);
 		}
 		if (serializeState(current) !== serializeState(snapshot)) throw new Error(STALE_SNAPSHOT_MESSAGE);
 
-		// Staged, then committed, then published: another process must never load a state
-		// that this one is about to abandon, so the rename happens last.
+		// Published last, so another process never loads a state this one may abandon.
 		const next = sortForPersistence(change(current));
 		const staged = await stageState(agentDir, next);
 
@@ -147,8 +136,6 @@ export async function mutateAccounts(
 		try {
 			await rename(staged, statePath(agentDir));
 		} catch (error) {
-			// Publishing failed after the runtime half succeeded, so put the runtime back
-			// rather than leaving it ahead of the file.
 			let rollbackError: unknown;
 			try {
 				undoCommit?.();
@@ -157,8 +144,7 @@ export async function mutateAccounts(
 			}
 			await rm(staged, { force: true });
 			if (rollbackError !== undefined) {
-				// The file is authoritative and was never published, so a reload rebuilds
-				// runtime state from it. Report both failures rather than hiding one.
+				// The unpublished file stays authoritative, so a reload resyncs runtime from it.
 				throw new Error(
 					`${errorMessage(error)}. Rolling back the runtime change also failed: ${errorMessage(rollbackError)}. Run /reload to resync.`,
 				);

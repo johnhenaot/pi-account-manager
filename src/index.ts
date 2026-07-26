@@ -26,25 +26,19 @@ import { loadAccounts, mutateAccounts } from "./state.ts";
 export const ANTHROPIC_EXTRA_USAGE_WARNING =
 	"Anthropic subscription auth is active. Third-party harness usage draws from extra usage and is billed per token, not your Claude plan limits. Manage extra usage at https://claude.ai/settings/usage. Disable this warning in /settings.";
 
-/**
- * `/reload` re-runs the extension factory in the same process, so a factory-local latch
- * would let the once-per-process warning fire again. Keyed on globalThis so it survives
- * both a new factory closure and a re-evaluated module. Exported so tests can clear it.
- */
+// On globalThis, not the closure: `/reload` re-runs the factory in the same process and a
+// local latch would let the once-per-process warning fire again.
 export const ANTHROPIC_WARNING_LATCH = Symbol.for("pi-account-manager.anthropicExtraUsageWarned");
 export const HOST_VERSION_LATCH = Symbol.for("pi-account-manager.hostVersionWarned");
 
-/**
- * The pi release this extension targets. Peer ranges cannot express this: pi supplies the
- * bundled packages at load time, so the package manager never sees which pi binary runs.
- */
+// A peer range cannot express this: pi supplies the bundled packages at load time, so the
+// package manager never sees which pi binary runs.
 export const SUPPORTED_PI = "0.82";
 
 type LatchHolder = Record<symbol, true | undefined>;
 
 export type AuthState = "authenticated" | "not authenticated" | "status unavailable";
 
-/** Reports only what pi reports. An unregistered alias or any failure is "status unavailable". */
 export function authState(registry: ModelRegistry, id: string): AuthState {
 	try {
 		if (!registry.getProvider(id)) return "status unavailable";
@@ -66,31 +60,21 @@ export function anthropicWarningEnabled(ctx: ExtensionContext): boolean {
 	}
 }
 
-/**
- * Ownership is proven against the raw registered provider rather than the composed one:
- * pi returns the registered object untouched only when no models.json entry or extension
- * config overlays that ID, so comparing against `getProvider()` would report a legitimately
- * composed alias as foreign.
- */
+// Compared against the raw registered provider, not the composed one: pi returns the
+// registered object untouched only when nothing overlays that ID, so `getProvider()` would
+// report a legitimately composed alias as foreign.
 function stillOurs(registry: ModelRegistry, id: string, ours: Provider | undefined): boolean {
 	return ours !== undefined && registry.getRegisteredNativeProvider(id) === ours;
 }
 
-/** The subset of pi's registration surface this extension needs. */
 interface Registrar {
 	registerProvider(provider: Provider): void;
 	unregisterProvider(name: string): void;
 }
 
-/**
- * Builds every alias before registering any, so a base that cannot back an alias fails
- * before anything is registered, and unwinds if a registration itself throws.
- *
- * Note: at bootstrap pi queues these registrations and drains them later with a per-item
- * try/catch that logs and continues, so the unwind below only runs on the session_start
- * path. Bootstrap atomicity is pi's to give, not ours — which is also why the returned
- * providers are only *attempted* registrations until ownership is confirmed.
- */
+// At bootstrap pi queues these and drains them itself, logging and continuing per item, so
+// the unwind runs only on the session_start path and the returned providers are merely
+// attempted until ownership is confirmed.
 function registerAll(
 	registrar: Registrar,
 	accounts: readonly Account[],
@@ -127,7 +111,7 @@ export default async function (pi: ExtensionAPI) {
 	const isOwnAnthropicAlias = (providerId: string): boolean =>
 		snapshot.some((account) => account.provider === "anthropic" && accountId(account) === providerId);
 
-	/** Pi never warns for alias providers itself, and never emits model_select on restore. */
+	// Pi never warns for alias providers itself, and never emits model_select on restore.
 	const maybeWarnAnthropic = (ctx: ExtensionContext, providerId: string | undefined) => {
 		if (ctx.mode !== "tui" || latch[ANTHROPIC_WARNING_LATCH]) return;
 		if (!providerId || !isOwnAnthropicAlias(providerId)) return;
@@ -137,14 +121,11 @@ export default async function (pi: ExtensionAPI) {
 		ctx.ui.notify(ANTHROPIC_EXTRA_USAGE_WARNING, "warning");
 	};
 
-	// Bootstrap registration is unconditional by necessity: ExtensionAPI exposes no provider
-	// lookup, and pi queues these calls and drains them itself, so there is no point at which
-	// this extension holds a registry and has not yet registered. If an earlier-loaded
-	// extension already owns one of these IDs, pi's last-writer-wins registry replaces it and
-	// the overwrite leaves no trace to detect at session_start. Registering later instead
-	// would forfeit startup model selection (findInitialModel precedes session_start) and
-	// `pi --list-models`, so the collision is accepted and documented rather than traded for
-	// those. Ownership *is* enforced from session_start onward, where a registry exists.
+	// Unconditional by necessity: ExtensionAPI has no provider lookup, so there is no point at
+	// which this extension holds a registry and has not yet registered. A collision with an
+	// earlier-loaded extension is therefore undetectable here; registering later instead would
+	// forfeit startup model selection and `pi --list-models`. Ownership is enforced from
+	// session_start onward, where a registry exists.
 	try {
 		snapshot = await loadAccounts(agentDir);
 		registered = registerAll(pi, snapshot, bundledProvider);
@@ -153,9 +134,8 @@ export default async function (pi: ExtensionAPI) {
 		fail(error);
 	}
 
-	// Rebuild against the effective registry, which includes any models.json overlay that
-	// the bundled factories know nothing about. Registered through `pi` rather than
-	// ctx.modelRegistry so pi refreshes the live model object after the swap.
+	// Rebuilt against the effective registry, which includes any models.json overlay. Through
+	// `pi` rather than ctx.modelRegistry, because only that path refreshes the live model.
 	pi.on("session_start", async (_event, ctx) => {
 		if (ctx.mode === "tui" && !latch[HOST_VERSION_LATCH] && !VERSION.startsWith(`${SUPPORTED_PI}.`)) {
 			latch[HOST_VERSION_LATCH] = true;
@@ -192,16 +172,15 @@ export default async function (pi: ExtensionAPI) {
 			}
 		}
 
-		// A restored session assigns its model directly, with no model_select event, so
-		// this is the only place a resumed alias model can be warned about.
+		// A restored session assigns its model directly, emitting no model_select.
 		if (ctx.model && isOwnAnthropicAlias(ctx.model.provider)) {
 			await ctx.modelRegistry.refresh();
 			maybeWarnAnthropic(ctx, ctx.model.provider);
 		}
 	});
 
-	// Pi reuses one ModelRuntime across /reload but gives the reloaded extension a fresh
-	// closure, so without this the previous instance's aliases stay registered forever.
+	// Pi reuses one ModelRuntime across /reload but hands the reload a fresh closure, so
+	// without this the previous instance's aliases stay registered forever.
 	pi.on("session_shutdown", async (event, ctx) => {
 		if (event.reason !== "reload") return;
 		for (const [id, provider] of registered) {
@@ -250,7 +229,6 @@ export default async function (pi: ExtensionAPI) {
 			return;
 		}
 
-		// Verified before anything is written, so a rejected add leaves nothing behind.
 		let alias: Provider;
 		try {
 			alias = buildAlias(ctx.modelRegistry.getProvider(provider), account);
@@ -265,8 +243,8 @@ export default async function (pi: ExtensionAPI) {
 				snapshot,
 				(accounts) => [...accounts, account],
 				() => {
-					// Rechecked here: the pre-flight check above runs before the lock and several
-					// awaits, so the ID can be claimed while this command waits on contention.
+					// Rechecked: the pre-flight check runs before the lock, so the ID can be claimed
+					// while this command waits on contention.
 					if (ctx.modelRegistry.getProvider(id) !== undefined) {
 						throw new Error(`provider ID "${id}" is already in use.`);
 					}
@@ -286,8 +264,7 @@ export default async function (pi: ExtensionAPI) {
 		await adoptNativeDefaultModel(provider, id);
 
 		const login = `/login ${id}`;
-		// Raw emptiness, not trimmed: a fresh pi editor is exactly "", so a whitespace-only
-		// draft is real content and must be preserved like any other.
+		// Not trimmed: a fresh pi editor is exactly "", so whitespace is a real draft.
 		if (ctx.ui.getEditorText() === "") {
 			ctx.ui.setEditorText(login);
 			ctx.ui.notify(`Added ${id}. Submit the prepared command to sign in.`, "info");
@@ -320,11 +297,9 @@ export default async function (pi: ExtensionAPI) {
 				agentDir,
 				snapshot,
 				(accounts) => {
-					// Applied under the lock, after the stale-snapshot check, so we never tell the
-					// user to /logout for an account another process already removed — following
-					// that advice would destroy a credential its removal deliberately kept.
+					// Under the lock, after the stale check: advising /logout for an account another
+					// process already removed would destroy a credential its removal kept.
 					const state = authState(ctx.modelRegistry, id);
-					// Fail closed: never forget an account whose credential status we could not confirm.
 					if (state === "status unavailable") throw new Error("its authentication status is unavailable.");
 
 					const blockers: string[] = [];
@@ -336,13 +311,11 @@ export default async function (pi: ExtensionAPI) {
 				},
 				() => {
 					const ours = registered.get(id);
-					// Never unregister a provider this extension does not own.
 					const unregistered = stillOurs(ctx.modelRegistry, id, ours);
 					if (unregistered) pi.unregisterProvider(id);
 					registered.delete(id);
 					return () => {
-						// Re-register only what this commit actually removed, so a rollback cannot
-						// overwrite a provider that another extension owns.
+						// Only what this commit removed, so a rollback cannot overwrite a foreign provider.
 						if (unregistered && ours) pi.registerProvider(ours);
 						if (ours) registered.set(id, ours);
 					};

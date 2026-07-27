@@ -171,7 +171,19 @@ describe("/account add", () => {
 		const pi = await start({ answers: ["Anthropic"] });
 		await pi.account("add work");
 		expect(pi.last().type).toBe("error");
-		expect(pi.last().message).toBe("anthropic@work already exists. Use /login anthropic@work to reauthenticate it.");
+		expect(pi.last().message).toContain("already exists. Use /login anthropic@work to reauthenticate it.");
+	});
+
+	it("advises /reload rather than /login when the account was already removed elsewhere", async () => {
+		await writeStateFile(agentDir, { version: 1, accounts: [work] });
+		const pi = await start({ answers: ["Anthropic"] });
+		// Another process removed it; our snapshot still lists it.
+		await writeStateFile(agentDir, { version: 1, accounts: [] });
+
+		await pi.account("add work");
+		expect(pi.last().message).toContain("/reload");
+		// Advising /login here would orphan a credential for an account that no longer exists.
+		expect(pi.last().message).not.toContain("Use /login");
 	});
 
 	it("allows the same name under the other provider", async () => {

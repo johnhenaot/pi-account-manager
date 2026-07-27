@@ -129,6 +129,17 @@ describe("adoptNativeDefaultModel", () => {
 		expect(map[id]).toBe("someone-elses-choice");
 	});
 
+	it("keeps an entry a new owner replaced with its own value", async () => {
+		const map = await piDefaultModelMap();
+		const id = track("anthropic@handover");
+		await adoptNativeDefaultModel("anthropic", id);
+		// A provider that took over the ID sets its own default.
+		map[id] = "new-owners-model";
+
+		await releaseDefaultModel(id);
+		expect(map[id]).toBe("new-owners-model");
+	});
+
 	it("is a no-op for an unknown alias", async () => {
 		const map = await piDefaultModelMap();
 		const before = { ...map };

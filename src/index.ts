@@ -220,11 +220,10 @@ export default async function (pi: ExtensionAPI) {
 
 		const account: Account = { provider, name };
 		const id = accountId(account);
-		if (snapshot.some((existing) => accountId(existing) === id)) {
-			ctx.ui.notify(`${id} already exists. Use /login ${id} to reauthenticate it.`, "error");
-			return;
-		}
-		if (ctx.modelRegistry.getProvider(id) || ctx.modelRegistry.getRegisteredProviderIds().includes(id)) {
+		// An ID we already own means this is a duplicate account, which the locked check below
+		// reports; only a foreign holder is an outright conflict.
+		const occupied = ctx.modelRegistry.getProvider(id) || ctx.modelRegistry.getRegisteredProviderIds().includes(id);
+		if (occupied && !stillOurs(ctx.modelRegistry, id, registered.get(id))) {
 			ctx.ui.notify(`Cannot add ${id}: provider ID "${id}" is already in use.`, "error");
 			return;
 		}
@@ -241,7 +240,14 @@ export default async function (pi: ExtensionAPI) {
 			snapshot = await mutateAccounts(
 				agentDir,
 				snapshot,
-				(accounts) => [...accounts, account],
+				(accounts) => {
+					// Checked under the lock, after the stale comparison: telling the user to
+					// /login an account another process already removed would orphan a credential.
+					if (accounts.some((existing) => accountId(existing) === id)) {
+						throw new Error(`already exists. Use /login ${id} to reauthenticate it.`);
+					}
+					return [...accounts, account];
+				},
 				() => {
 					// Rechecked: the pre-flight check runs before the lock, so the ID can be claimed
 					// while this command waits on contention.

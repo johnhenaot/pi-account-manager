@@ -13,7 +13,10 @@ type DefaultModelMap = Record<string, string>;
 // On globalThis because `/reload` may re-evaluate this module, while the host map it
 // tracks outlives that.
 const INSTALLED = Symbol.for("pi-account-manager.installedDefaultModels");
-const installed = ((globalThis as Record<symbol, unknown>)[INSTALLED] ??= new Set<string>()) as Set<string>;
+const installed = ((globalThis as Record<symbol, unknown>)[INSTALLED] ??= new Map<string, string>()) as Map<
+	string,
+	string
+>;
 
 export type Resolver = ((specifier: string) => string) | undefined;
 
@@ -61,12 +64,15 @@ export async function adoptNativeDefaultModel(provider: ProviderId, aliasId: str
 	if (!map || typeof nativeDefault !== "string") return;
 	if (aliasId in map) return;
 	map[aliasId] = nativeDefault;
-	installed.add(aliasId);
+	installed.set(aliasId, nativeDefault);
 }
 
 /** Without this, a provider later taking the ID inherits a default it may not offer. */
 export async function releaseDefaultModel(aliasId: string): Promise<void> {
-	if (!installed.delete(aliasId)) return;
+	const ourValue = installed.get(aliasId);
+	if (ourValue === undefined) return;
+	installed.delete(aliasId);
 	const map = await defaultModelMap();
-	if (map) delete map[aliasId];
+	// Only if the value is still ours: a provider that took over the ID may have set its own.
+	if (map && map[aliasId] === ourValue) delete map[aliasId];
 }

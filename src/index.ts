@@ -67,6 +67,13 @@ function stillOurs(registry: ModelRegistry, id: string, ours: Provider | undefin
 	return ours !== undefined && registry.getRegisteredNativeProvider(id) === ours;
 }
 
+// Both forms matter: an ID can be registered while resolving to no effective provider, in
+// which case getProvider() alone reports it free.
+function occupiedByOther(registry: ModelRegistry, id: string, ours: Provider | undefined): boolean {
+	if (stillOurs(registry, id, ours)) return false;
+	return registry.getProvider(id) !== undefined || registry.getRegisteredProviderIds().includes(id);
+}
+
 interface Registrar {
 	registerProvider(provider: Provider): void;
 	unregisterProvider(name: string): void;
@@ -158,8 +165,7 @@ export default async function (pi: ExtensionAPI) {
 
 			const taken = snapshot
 				.map(accountId)
-				.filter((id) => !stillOurs(ctx.modelRegistry, id, registered.get(id)))
-				.filter((id) => ctx.modelRegistry.getProvider(id) !== undefined);
+				.filter((id) => occupiedByOther(ctx.modelRegistry, id, registered.get(id)));
 			if (taken.length > 0) {
 				await abandon(registered, new Error(`provider ID "${taken[0]}" is already in use.`));
 			} else {
@@ -174,7 +180,9 @@ export default async function (pi: ExtensionAPI) {
 
 		// A restored session assigns its model directly, emitting no model_select.
 		if (ctx.model && isOwnAnthropicAlias(ctx.model.provider)) {
-			await ctx.modelRegistry.refresh();
+			// Only to make the auth snapshot current for an advisory warning, so a failure here
+			// must not reject session_start and interfere with restoring the session.
+			await ctx.modelRegistry.refresh().catch(() => {});
 			maybeWarnAnthropic(ctx, ctx.model.provider);
 		}
 	});
@@ -222,8 +230,7 @@ export default async function (pi: ExtensionAPI) {
 		const id = accountId(account);
 		// An ID we already own means this is a duplicate account, which the locked check below
 		// reports; only a foreign holder is an outright conflict.
-		const occupied = ctx.modelRegistry.getProvider(id) || ctx.modelRegistry.getRegisteredProviderIds().includes(id);
-		if (occupied && !stillOurs(ctx.modelRegistry, id, registered.get(id))) {
+		if (occupiedByOther(ctx.modelRegistry, id, registered.get(id))) {
 			ctx.ui.notify(`Cannot add ${id}: provider ID "${id}" is already in use.`, "error");
 			return;
 		}
@@ -251,7 +258,7 @@ export default async function (pi: ExtensionAPI) {
 				() => {
 					// Rechecked: the pre-flight check runs before the lock, so the ID can be claimed
 					// while this command waits on contention.
-					if (ctx.modelRegistry.getProvider(id) !== undefined) {
+					if (occupiedByOther(ctx.modelRegistry, id, registered.get(id))) {
 						throw new Error(`provider ID "${id}" is already in use.`);
 					}
 					pi.registerProvider(alias);

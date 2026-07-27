@@ -698,6 +698,34 @@ describe("host version notice", () => {
 	});
 });
 
+describe("registered-but-unresolved provider IDs", () => {
+	// A models.json-shaped registration can occupy an ID while resolving to no provider, so
+	// getProvider() alone reports it free.
+	const claimByConfig = (pi: Awaited<ReturnType<typeof harness>>) =>
+		pi.registry.registerProvider("anthropic@work", { name: "Foreign", baseUrl: "https://foreign.example.com" });
+
+	it("refuses the ID at session_start", async () => {
+		await writeStateFile(agentDir, { version: 1, accounts: [work] });
+		const pi = await start();
+		await pi.emit("session_shutdown", { type: "session_shutdown", reason: "reload" });
+		claimByConfig(pi);
+		expect(pi.registry.getRegisteredProviderIds()).toContain("anthropic@work");
+
+		await pi.emit("session_start", { type: "session_start", reason: "reload" });
+		await pi.account("");
+		expect(pi.last().type).toBe("error");
+		expect(pi.last().message).toContain("already in use");
+	});
+
+	it("refuses the ID on add, before and after the lock", async () => {
+		const pi = await start({ answers: ["Anthropic"] });
+		claimByConfig(pi);
+		await pi.account("add work");
+		expect(pi.last().message).toContain("already in use");
+		expect(await loadAccounts(agentDir)).toEqual([]);
+	});
+});
+
 describe("provider ID ownership at session_start", () => {
 	it("detects a foreign provider that clobbered an ID we had registered", async () => {
 		await writeStateFile(agentDir, { version: 1, accounts: [work] });

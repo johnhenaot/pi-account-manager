@@ -177,13 +177,14 @@ export default async function (pi: ExtensionAPI) {
 			if (taken.length > 0) {
 				await abandon(registered, new Error(`provider ID "${taken[0]}" is already in use.`));
 			} else {
-				const previous = registered;
 				try {
 					registered = registerAll(pi, snapshot, (provider) => ctx.modelRegistry.getProvider(provider));
 					// Re-adopted from the effective catalogs, which may differ from the bundled ones.
 					await adoptAllDefaults();
 				} catch (error) {
-					await abandon(previous, error);
+					// `registered` deliberately, not a pre-call copy: if registerAll succeeded and
+					// adoption then failed, the new aliases are the ones holding the IDs.
+					await abandon(registered, error);
 				}
 			}
 		}

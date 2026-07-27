@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { getPackageDir } from "@earendil-works/pi-coding-agent";
+import type { Provider } from "@earendil-works/pi-ai";
 import type { ProviderId } from "./account.ts";
 
 /**
@@ -58,13 +59,28 @@ function defaultModelMap(): Promise<DefaultModelMap | null> {
 	return pending;
 }
 
-export async function adoptNativeDefaultModel(provider: ProviderId, aliasId: string): Promise<void> {
+/**
+ * Validated against the alias catalog: a models.json overlay can leave the effective
+ * provider without its native default, and pi then reports that default as unavailable
+ * instead of selecting anything.
+ */
+export async function adoptNativeDefaultModel(provider: ProviderId, alias: Provider): Promise<void> {
 	const map = await defaultModelMap();
 	const nativeDefault = map?.[provider];
 	if (!map || typeof nativeDefault !== "string") return;
-	if (aliasId in map) return;
-	map[aliasId] = nativeDefault;
-	installed.set(aliasId, nativeDefault);
+
+	const ours = installed.get(alias.id);
+	if (alias.id in map && map[alias.id] !== ours) return;
+
+	if (!alias.getModels().some((model) => model.id === nativeDefault)) {
+		if (ours !== undefined) {
+			delete map[alias.id];
+			installed.delete(alias.id);
+		}
+		return;
+	}
+	map[alias.id] = nativeDefault;
+	installed.set(alias.id, nativeDefault);
 }
 
 /** Without this, a provider later taking the ID inherits a default it may not offer. */

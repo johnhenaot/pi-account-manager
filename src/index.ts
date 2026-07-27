@@ -115,6 +115,14 @@ export default async function (pi: ExtensionAPI) {
 		registered = new Map();
 	};
 
+	const adoptAllDefaults = () =>
+		Promise.all(
+			snapshot.map((account) => {
+				const alias = registered.get(accountId(account));
+				return alias ? adoptNativeDefaultModel(account.provider, alias) : undefined;
+			}),
+		);
+
 	const isOwnAnthropicAlias = (providerId: string): boolean =>
 		snapshot.some((account) => account.provider === "anthropic" && accountId(account) === providerId);
 
@@ -136,7 +144,7 @@ export default async function (pi: ExtensionAPI) {
 	try {
 		snapshot = await loadAccounts(agentDir);
 		registered = registerAll(pi, snapshot, bundledProvider);
-		await Promise.all(snapshot.map((account) => adoptNativeDefaultModel(account.provider, accountId(account))));
+		await adoptAllDefaults();
 	} catch (error) {
 		fail(error);
 	}
@@ -172,6 +180,8 @@ export default async function (pi: ExtensionAPI) {
 				const previous = registered;
 				try {
 					registered = registerAll(pi, snapshot, (provider) => ctx.modelRegistry.getProvider(provider));
+					// Re-adopted from the effective catalogs, which may differ from the bundled ones.
+					await adoptAllDefaults();
 				} catch (error) {
 					await abandon(previous, error);
 				}
@@ -276,7 +286,7 @@ export default async function (pi: ExtensionAPI) {
 			return;
 		}
 
-		await adoptNativeDefaultModel(provider, id);
+		await adoptNativeDefaultModel(provider, alias);
 
 		const login = `/login ${id}`;
 		// Not trimmed: a fresh pi editor is exactly "", so whitespace is a real draft.
@@ -333,7 +343,7 @@ export default async function (pi: ExtensionAPI) {
 						if (unregistered && ours) {
 							// The freed ID may have been claimed while the rename was pending; a
 							// rollback that cannot restore must be reported, not silently skipped.
-							if (ctx.modelRegistry.getProvider(id) !== undefined) {
+							if (occupiedByOther(ctx.modelRegistry, id, undefined)) {
 								throw new Error(`provider ID "${id}" was claimed before the removal could roll back.`);
 							}
 							pi.registerProvider(ours);

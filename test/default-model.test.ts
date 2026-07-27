@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import type { Provider } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { adoptNativeDefaultModel, modelResolverSpecifier, releaseDefaultModel } from "../src/default-model.ts";
 import { cleanupAgentDir, harness, makeAgentDir, writeStateFile } from "./helpers.ts";
@@ -28,6 +29,13 @@ afterEach(async () => {
 	for (const id of touched.splice(0)) delete map[id];
 	await cleanupAgentDir(agentDir);
 });
+
+const aliasOffering = (id: string, modelIds: string[]): Provider =>
+	({ id, getModels: () => modelIds.map((modelId) => ({ id: modelId })) }) as unknown as Provider;
+
+/** An alias whose catalog contains its native provider's default, the normal case. */
+const nativeAlias = async (provider: string, id: string): Promise<Provider> =>
+	aliasOffering(id, [(await piDefaultModelMap())[provider]]);
 
 const track = (id: string) => {
 	touched.push(id);
@@ -65,14 +73,14 @@ describe("adoptNativeDefaultModel", () => {
 		const map = await piDefaultModelMap();
 		expect(map.anthropic).toBeTruthy();
 
-		await adoptNativeDefaultModel("anthropic", track("anthropic@work"));
+		await adoptNativeDefaultModel("anthropic", await nativeAlias("anthropic", track("anthropic@work")));
 		expect(map["anthropic@work"]).toBe(map.anthropic);
 	});
 
 	it("covers both supported providers", async () => {
 		const map = await piDefaultModelMap();
-		await adoptNativeDefaultModel("anthropic", track("anthropic@a"));
-		await adoptNativeDefaultModel("openai-codex", track("openai-codex@b"));
+		await adoptNativeDefaultModel("anthropic", await nativeAlias("anthropic", track("anthropic@a")));
+		await adoptNativeDefaultModel("openai-codex", await nativeAlias("openai-codex", track("openai-codex@b")));
 		expect(map["anthropic@a"]).toBe(map.anthropic);
 		expect(map["openai-codex@b"]).toBe(map["openai-codex"]);
 	});
@@ -81,7 +89,7 @@ describe("adoptNativeDefaultModel", () => {
 		const map = await piDefaultModelMap();
 		const id = track("anthropic@gate");
 		expect(id in map).toBe(false);
-		await adoptNativeDefaultModel("anthropic", id);
+		await adoptNativeDefaultModel("anthropic", await nativeAlias("anthropic", id));
 		// This `in` test is exactly what pi gates the post-login selection on.
 		expect(id in map).toBe(true);
 	});
@@ -111,7 +119,7 @@ describe("adoptNativeDefaultModel", () => {
 
 	it("releases only entries it installed", async () => {
 		const map = await piDefaultModelMap();
-		await adoptNativeDefaultModel("anthropic", track("anthropic@mine"));
+		await adoptNativeDefaultModel("anthropic", await nativeAlias("anthropic", track("anthropic@mine")));
 		expect(map["anthropic@mine"]).toBe(map.anthropic);
 
 		await releaseDefaultModel("anthropic@mine");
@@ -123,16 +131,34 @@ describe("adoptNativeDefaultModel", () => {
 		const id = track("anthropic@preexisting");
 		map[id] = "someone-elses-choice";
 
-		await adoptNativeDefaultModel("anthropic", id);
+		await adoptNativeDefaultModel("anthropic", await nativeAlias("anthropic", id));
 		await releaseDefaultModel(id);
 		// Releasing must not delete a key we never installed.
 		expect(map[id]).toBe("someone-elses-choice");
 	});
 
+	it("does not install a default the alias catalog cannot offer", async () => {
+		const map = await piDefaultModelMap();
+		const id = track("anthropic@narrowed");
+		// A models.json overlay can leave the effective provider without its native default.
+		await adoptNativeDefaultModel("anthropic", aliasOffering(id, ["some-other-model"]));
+		expect(id in map).toBe(false);
+	});
+
+	it("withdraws an entry once the catalog stops offering it", async () => {
+		const map = await piDefaultModelMap();
+		const id = track("anthropic@shrunk");
+		await adoptNativeDefaultModel("anthropic", await nativeAlias("anthropic", id));
+		expect(map[id]).toBe(map.anthropic);
+
+		await adoptNativeDefaultModel("anthropic", aliasOffering(id, ["some-other-model"]));
+		expect(id in map).toBe(false);
+	});
+
 	it("keeps an entry a new owner replaced with its own value", async () => {
 		const map = await piDefaultModelMap();
 		const id = track("anthropic@handover");
-		await adoptNativeDefaultModel("anthropic", id);
+		await adoptNativeDefaultModel("anthropic", await nativeAlias("anthropic", id));
 		// A provider that took over the ID sets its own default.
 		map[id] = "new-owners-model";
 
@@ -151,7 +177,7 @@ describe("adoptNativeDefaultModel", () => {
 		const map = await piDefaultModelMap();
 		const id = track("anthropic@pinned");
 		map[id] = "already-chosen";
-		await adoptNativeDefaultModel("anthropic", id);
+		await adoptNativeDefaultModel("anthropic", await nativeAlias("anthropic", id));
 		expect(map[id]).toBe("already-chosen");
 	});
 
@@ -176,9 +202,10 @@ describe("adoptNativeDefaultModel", () => {
 			script,
 			`import { adoptNativeDefaultModel } from ${JSON.stringify(moduleUrl)};
 const { defaultModelPerProvider: map } = await import(${JSON.stringify(resolverPath)});
+const alias = (id, provider) => ({ id, getModels: () => [{ id: map[provider] }] });
 await Promise.all([
-	adoptNativeDefaultModel("anthropic", "anthropic@one"),
-	adoptNativeDefaultModel("openai-codex", "openai-codex@two"),
+	adoptNativeDefaultModel("anthropic", alias("anthropic@one", "anthropic")),
+	adoptNativeDefaultModel("openai-codex", alias("openai-codex@two", "openai-codex")),
 ]);
 console.log(JSON.stringify({ one: map["anthropic@one"], two: map["openai-codex@two"] }));
 `,

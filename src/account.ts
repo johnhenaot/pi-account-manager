@@ -1,5 +1,6 @@
 export const PROVIDERS = {
 	anthropic: "Anthropic",
+	openai: "OpenAI",
 	"openai-codex": "OpenAI Codex",
 } as const;
 

@@ -33,7 +33,7 @@ export const HOST_VERSION_LATCH = Symbol.for("pi-account-manager.hostVersionWarn
 
 // A peer range cannot express this: pi supplies the bundled packages at load time, so the
 // package manager never sees which pi binary runs.
-export const SUPPORTED_PI = "0.82";
+export const SUPPORTED_PI = "1.0";
 
 type LatchHolder = Record<symbol, true | undefined>;
 

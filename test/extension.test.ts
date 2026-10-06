@@ -35,6 +35,44 @@ const work: Account = { provider: "anthropic", name: "work" };
 
 const start = (options: HarnessOptions = {}) => harness(agentDir, options);
 
+describe("OpenAI subscription accounts", () => {
+	it("adds, lists, reloads, and removes an OpenAI account alongside a legacy account", async () => {
+		const legacy: Account = { provider: "openai-codex", name: "work" };
+		const subscription: Account = { provider: "openai", name: "work" };
+		await writeStateFile(agentDir, { version: 1, accounts: [legacy] });
+		const first = await start({ answers: ["OpenAI"] });
+		await first.account("add work");
+		expect(first.editor()).toBe("/login openai@work");
+		expect(await loadAccounts(agentDir)).toEqual([subscription, legacy]);
+		expect(first.registry.getProvider("openai@work")?.auth.oauth).toBe(
+			first.registry.getProvider("openai")?.auth.oauth,
+		);
+		await first.account("list");
+		expect(first.last().message).toContain("openai@work");
+		expect(first.last().message).toContain("openai-codex@work");
+		await first.emit("session_shutdown", { type: "session_shutdown", reason: "reload" });
+
+		const reloaded = await start();
+		await reloaded.emit("session_start", { type: "session_start", reason: "reload" });
+		expect(reloaded.registry.getProvider("openai@work")?.name).toBe("OpenAI (work)");
+		await reloaded.account("remove openai@work");
+		expect(reloaded.last().type).toBe("info");
+		expect(await loadAccounts(agentDir)).toEqual([legacy]);
+		expect(reloaded.registry.getProvider("openai@work")).toBeUndefined();
+		expect(reloaded.registry.getProvider("openai-codex@work")).toBeDefined();
+		expect(reloaded.registry.getProvider("openai")).toBeDefined();
+	});
+
+	it("refuses hosts without standard OpenAI OAuth before persisting an account", async () => {
+		const pi = await start({ answers: ["OpenAI"] });
+		pi.registry.registerProvider(stubProvider("openai", { oauth: false }));
+		await pi.account("add work");
+		expect(pi.last().message).toContain('provider "openai" has no OAuth flow');
+		expect(await loadAccounts(agentDir)).toEqual([]);
+		expect(pi.registry.getProvider("openai@work")).toBeUndefined();
+	});
+});
+
 describe("/account list", () => {
 	it("reports an empty snapshot with the exact message", async () => {
 		const pi = await start();
@@ -694,7 +732,7 @@ describe("host version notice", () => {
 	});
 
 	it("names the supported release so the check cannot silently drift", () => {
-		expect(SUPPORTED_PI).toBe("0.82");
+		expect(SUPPORTED_PI).toBe("1.0");
 	});
 });
 

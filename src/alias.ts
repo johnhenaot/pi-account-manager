@@ -1,4 +1,4 @@
-import type { Api, Model, Provider } from "@earendil-works/pi-ai";
+import type { Api, Model, Provider, StreamOptions } from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { type Account, aliasDisplayName, aliasId, type ProviderId } from "./account.ts";
 
@@ -16,6 +16,29 @@ export function buildAlias(base: Provider | undefined, account: Account): Provid
 
 	const reprovision = (models: readonly Model<Api>[], provider: string) =>
 		models.map((model) => ({ ...model, provider }));
+
+	const streamOptions = <T extends StreamOptions>(model: Model<Api>, options: T | undefined): T | undefined => {
+		// Pi's Responses adapter recognizes ChatGPT subscription tokens only on the
+		// literal `openai` provider. Mirror its payload omissions without changing the
+		// alias ID used for credentials, stream attribution, and transcript replay.
+		if (
+			account.provider !== "openai" || model.api !== "openai-responses" ||
+			model.baseUrl !== "https://api.openai.com/v1" ||
+			options?.apiKey === undefined || options.apiKey.startsWith("sk-")
+		) return options;
+		return {
+			...options,
+			onPayload: async (payload, requestModel) => {
+				const params = payload as Record<string, unknown>;
+				delete params.max_output_tokens;
+				delete params.temperature;
+				delete params.prompt_cache_retention;
+				delete params.prompt_cache_options;
+				// Native Pi applies these omissions before the caller's hook too.
+				return options.onPayload?.(payload, requestModel);
+			},
+		};
+	};
 
 	return {
 		id,
@@ -36,7 +59,7 @@ export function buildAlias(base: Provider | undefined, account: Account): Provid
 			}),
 		// The model keeps `provider: <alias id>`, which is what makes pi attribute every stream
 		// event, message, and session entry to this account.
-		stream: (model, context, options) => base.stream(model, context, options),
-		streamSimple: (model, context, options) => base.streamSimple(model, context, options),
+		stream: (model, context, options) => base.stream(model, context, streamOptions(model, options)),
+		streamSimple: (model, context, options) => base.streamSimple(model, context, streamOptions(model, options)),
 	};
 }

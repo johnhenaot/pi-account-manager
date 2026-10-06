@@ -77,12 +77,14 @@ describe("adoptNativeDefaultModel", () => {
 		expect(map["anthropic@work"]).toBe(map.anthropic);
 	});
 
-	it("covers both supported providers", async () => {
+	it("covers all supported providers", async () => {
 		const map = await piDefaultModelMap();
 		await adoptNativeDefaultModel("anthropic", await nativeAlias("anthropic", track("anthropic@a")));
 		await adoptNativeDefaultModel("openai-codex", await nativeAlias("openai-codex", track("openai-codex@b")));
+		await adoptNativeDefaultModel("openai", await nativeAlias("openai", track("openai@c")));
 		expect(map["anthropic@a"]).toBe(map.anthropic);
 		expect(map["openai-codex@b"]).toBe(map["openai-codex"]);
+		expect(map["openai@c"]).toBe(map.openai);
 	});
 
 	it("satisfies pi's own hasDefaultModelProvider check", async () => {
@@ -101,15 +103,18 @@ describe("adoptNativeDefaultModel", () => {
 			accounts: [
 				{ provider: "anthropic", name: "work" },
 				{ provider: "openai-codex", name: "personal" },
+				{ provider: "openai", name: "work" },
 			],
 		});
 		const pi = await harness(agentDir);
 		track("anthropic@work");
 		track("openai-codex@personal");
+		track("openai@work");
 
 		for (const [aliasId, native] of [
 			["anthropic@work", "anthropic"],
 			["openai-codex@personal", "openai-codex"],
+			["openai@work", "openai"],
 		]) {
 			const wanted = map[native];
 			const offered = pi.registry.getAll().filter((model) => model.provider === aliasId);

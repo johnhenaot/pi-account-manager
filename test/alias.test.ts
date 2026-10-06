@@ -1,4 +1,5 @@
 import type { Provider } from "@earendil-works/pi-ai";
+import { normalizeContext } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Account } from "../src/account.ts";
 import { buildAlias, bundledProvider } from "../src/alias.ts";
@@ -27,8 +28,8 @@ describe("buildAlias", () => {
 		expect(alias.baseUrl).toBe(base?.baseUrl);
 	});
 
-	it("builds from both supported bundled providers", () => {
-		for (const provider of ["anthropic", "openai-codex"] as const) {
+	it("builds from all supported bundled providers", () => {
+		for (const provider of ["anthropic", "openai", "openai-codex"] as const) {
 			const alias = buildAlias(bundledProvider(provider), { provider, name: "personal" });
 			expect(alias.id).toBe(`${provider}@personal`);
 			expect(alias.getModels().length).toBeGreaterThan(0);
@@ -67,7 +68,7 @@ describe("buildAlias", () => {
 	it("attributes the stream to the alias and delegates to the native provider", async () => {
 		const alias = buildAlias(stubProvider("anthropic"), work);
 		const model = alias.getModels()[0];
-		const message = await alias.streamSimple(model, { messages: [] }).result();
+		const message = await alias.streamSimple(model, normalizeContext({ messages: [] })).result();
 		expect(message.provider).toBe("anthropic@work");
 		expect(message.model).toBe(model.id);
 	});

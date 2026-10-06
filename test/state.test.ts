@@ -40,7 +40,11 @@ describe("state schema", () => {
 	});
 
 	it("round-trips through the exact version 1 shape", () => {
-		const accounts: Account[] = [{ provider: "anthropic", name: "work" }];
+		const accounts: Account[] = [
+			{ provider: "anthropic", name: "work" },
+			{ provider: "openai", name: "work" },
+			{ provider: "openai-codex", name: "work" },
+		];
 		expect(JSON.parse(serializeState(accounts))).toEqual({ version: 1, accounts });
 		expect(parseState(serializeState(accounts))).toEqual(accounts);
 	});
@@ -56,7 +60,7 @@ describe("state schema", () => {
 			['{"version":1,"accounts":[[]]}', "not an object"],
 			['{"version":1,"accounts":[{"provider":"anthropic"}]}', "exactly"],
 			['{"version":1,"accounts":[{"provider":"anthropic","name":"work","extra":1}]}', "exactly"],
-			['{"version":1,"accounts":[{"provider":"openai","name":"work"}]}', "unsupported provider"],
+			['{"version":1,"accounts":[{"provider":"unsupported","name":"work"}]}', "unsupported provider"],
 			['{"version":1,"accounts":[{"provider":"anthropic","name":"Work"}]}', "invalid account name"],
 			['{"version":1,"accounts":[{"provider":"anthropic","name":"-bad"}]}', "invalid account name"],
 			[

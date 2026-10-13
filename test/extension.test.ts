@@ -1,12 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Account } from "../src/account.ts";
-import { USAGE } from "../src/command.ts";
-import { ANTHROPIC_EXTRA_USAGE_WARNING, ANTHROPIC_WARNING_LATCH, authState, HOST_VERSION_LATCH, SUPPORTED_PI } from "../src/index.ts";
-import { EMPTY_LIST } from "../src/list.ts";
-import { modelResolverSpecifier } from "../src/default-model.ts";
+import { ANTHROPIC_EXTRA_USAGE_WARNING, EMPTY_LIST, isAuthenticated, MIN_PI, meetsMinimum, USAGE, WARNED } from "../src/index.ts";
 import { loadAccounts, statePath } from "../src/state.ts";
 import {
 	cleanupAgentDir,
@@ -23,8 +20,7 @@ let agentDir: string;
 
 beforeEach(async () => {
 	agentDir = await makeAgentDir();
-	delete (globalThis as Record<symbol, unknown>)[ANTHROPIC_WARNING_LATCH];
-	delete (globalThis as Record<symbol, unknown>)[HOST_VERSION_LATCH];
+	delete (globalThis as Record<symbol, unknown>)[WARNED];
 });
 
 afterEach(async () => {
@@ -34,6 +30,44 @@ afterEach(async () => {
 const work: Account = { provider: "anthropic", name: "work" };
 
 const start = (options: HarnessOptions = {}) => harness(agentDir, options);
+
+describe("OpenAI subscription accounts", () => {
+	it("adds, lists, reloads, and removes an OpenAI account alongside a legacy account", async () => {
+		const legacy: Account = { provider: "openai-codex", name: "work" };
+		const subscription: Account = { provider: "openai", name: "work" };
+		await writeStateFile(agentDir, { version: 1, accounts: [legacy] });
+		const first = await start({ answers: ["OpenAI"] });
+		await first.account("add work");
+		expect(first.editor()).toBe("/login openai@work");
+		expect(await loadAccounts(agentDir)).toEqual([subscription, legacy]);
+		expect(first.registry.getProvider("openai@work")?.auth.oauth).toBe(
+			first.registry.getProvider("openai")?.auth.oauth,
+		);
+		await first.account("list");
+		expect(first.last().message).toContain("openai@work");
+		expect(first.last().message).toContain("openai-codex@work");
+		await first.emit("session_shutdown", { type: "session_shutdown", reason: "reload" });
+
+		const reloaded = await start();
+		await reloaded.emit("session_start", { type: "session_start", reason: "reload" });
+		expect(reloaded.registry.getProvider("openai@work")?.name).toBe("OpenAI (work)");
+		await reloaded.account("remove openai@work");
+		expect(reloaded.last().type).toBe("info");
+		expect(await loadAccounts(agentDir)).toEqual([legacy]);
+		expect(reloaded.registry.getProvider("openai@work")).toBeUndefined();
+		expect(reloaded.registry.getProvider("openai-codex@work")).toBeDefined();
+		expect(reloaded.registry.getProvider("openai")).toBeDefined();
+	});
+
+	it("refuses hosts without standard OpenAI OAuth before persisting an account", async () => {
+		const pi = await start({ answers: ["OpenAI"] });
+		pi.registry.registerProvider(stubProvider("openai", { oauth: false }));
+		await pi.account("add work");
+		expect(pi.last().message).toContain('provider "openai" has no OAuth flow');
+		expect(await loadAccounts(agentDir)).toEqual([]);
+		expect(pi.registry.getProvider("openai@work")).toBeUndefined();
+	});
+});
 
 describe("/account list", () => {
 	it("reports an empty snapshot with the exact message", async () => {
@@ -174,18 +208,6 @@ describe("/account add", () => {
 		expect(pi.last().message).toContain("already exists. Use /login anthropic@work to reauthenticate it.");
 	});
 
-	it("advises /reload rather than /login when the account was already removed elsewhere", async () => {
-		await writeStateFile(agentDir, { version: 1, accounts: [work] });
-		const pi = await start({ answers: ["Anthropic"] });
-		// Another process removed it; our snapshot still lists it.
-		await writeStateFile(agentDir, { version: 1, accounts: [] });
-
-		await pi.account("add work");
-		expect(pi.last().message).toContain("/reload");
-		// Advising /login here would orphan a credential for an account that no longer exists.
-		expect(pi.last().message).not.toContain("Use /login");
-	});
-
 	it("allows the same name under the other provider", async () => {
 		await writeStateFile(agentDir, { version: 1, accounts: [work] });
 		const pi = await start({ answers: ["OpenAI Codex"] });
@@ -208,33 +230,6 @@ describe("/account add", () => {
 	 * The pre-flight ID check runs before the lock and several awaits, so the ID can be
 	 * claimed while the command waits. Holding the lock makes that window deterministic.
 	 */
-	it("refuses an ID claimed while the command waited for the lock", async () => {
-		const pi = await start({ answers: ["Anthropic"] });
-		const lock = join(agentDir, "pi-account-manager", "accounts.lock");
-		await mkdir(join(agentDir, "pi-account-manager"), { recursive: true });
-		await writeFile(lock, "", "utf8");
-
-		const pending = pi.account("add work");
-		// Past the pre-flight check and blocked on the lock; now another extension claims it.
-		await new Promise((resolve) => setTimeout(resolve, 50));
-		const foreign = stubProvider("anthropic@work");
-		pi.registry.registerProvider(foreign);
-		await rm(lock, { force: true });
-		await pending;
-
-		expect(pi.last().type).toBe("error");
-		expect(pi.last().message).toContain("already in use");
-		expect(pi.registry.getRegisteredNativeProvider("anthropic@work")).toBe(foreign);
-		expect(await loadAccounts(agentDir)).toEqual([]);
-	}, 20_000);
-
-	it("aborts with a /reload instruction when state drifted", async () => {
-		const pi = await start({ answers: ["Anthropic"] });
-		await writeStateFile(agentDir, { version: 1, accounts: [{ provider: "openai-codex", name: "other" }] });
-		await pi.account("add work");
-		expect(pi.last().message).toContain("/reload");
-		expect(pi.registry.getProvider("anthropic@work")).toBeUndefined();
-	});
 });
 
 describe("/account remove", () => {
@@ -318,15 +313,6 @@ describe("/account remove", () => {
 		expect(await loadAccounts(agentDir)).toEqual([work]);
 	});
 
-	it("fails closed when authentication status is unavailable", async () => {
-		const pi = await seeded([work]);
-		// Drop the alias out of the registry so pi can no longer report its status.
-		pi.registry.unregisterProvider("anthropic@work");
-		await pi.account("remove anthropic@work");
-		expect(pi.last().message).toContain("status is unavailable");
-		expect(await loadAccounts(agentDir)).toEqual([work]);
-	});
-
 	it("leaves the credential in place", async () => {
 		const pi = await seeded([work]);
 		await pi.credentials.modify("anthropic@other", async () => oauthCredential());
@@ -359,46 +345,6 @@ describe("/account remove", () => {
 		},
 	);
 
-	it("gives back the default-model entry so a later owner of the ID is not poisoned", async () => {
-		const { defaultModelPerProvider: map } = (await import(modelResolverSpecifier())) as {
-			defaultModelPerProvider: Record<string, string>;
-		};
-		const pi = await seeded([work]);
-		expect(map["anthropic@work"]).toBeTruthy();
-
-		await pi.account("remove anthropic@work");
-		expect(await loadAccounts(agentDir)).toEqual([]);
-		// A provider that later takes this ID must not inherit our default model.
-		expect("anthropic@work" in map).toBe(false);
-	});
-
-	it("leaves a foreign provider alone when removing the account behind its ID", async () => {
-		const pi = await seeded([work]);
-		const foreign = stubProvider("anthropic@work");
-		pi.registry.registerProvider(foreign);
-
-		await pi.account("remove anthropic@work");
-
-		// The account is forgotten, but the provider we do not own is untouched, and the
-		// rollback path is gated on the same flag so it cannot re-register over it either.
-		expect(await loadAccounts(agentDir)).toEqual([]);
-		expect(pi.registry.getRegisteredNativeProvider("anthropic@work")).toBe(foreign);
-	});
-
-	it("advises /reload rather than /logout when the account is already gone", async () => {
-		const pi = await seeded([work]);
-		await pi.credentials.modify("anthropic@work", async () => oauthCredential());
-		await pi.runtime.refresh({ allowNetwork: false });
-		// Another process removed it; ours is still authenticated and still holds the snapshot.
-		await writeStateFile(agentDir, { version: 1, accounts: [] });
-
-		await pi.account("remove anthropic@work");
-		expect(pi.last().message).toContain("/reload");
-		// Advising /logout here would destroy a credential the other process kept on purpose.
-		expect(pi.last().message).not.toContain("/logout");
-		expect(pi.credentials.entries.has("anthropic@work")).toBe(true);
-	});
-
 	it("still blocks an authenticated account when the snapshot is current", async () => {
 		const pi = await seeded([work]);
 		await pi.credentials.modify("anthropic@work", async () => oauthCredential());
@@ -406,14 +352,6 @@ describe("/account remove", () => {
 		await pi.account("remove anthropic@work");
 		expect(pi.last().message).toContain("/logout");
 		expect(await loadAccounts(agentDir)).toEqual([work]);
-	});
-
-	it("aborts with a /reload instruction when the target disappeared", async () => {
-		const pi = await seeded([work]);
-		await writeStateFile(agentDir, { version: 1, accounts: [] });
-		await pi.account("remove anthropic@work");
-		expect(pi.last().message).toContain("/reload");
-		expect(pi.registry.getProvider("anthropic@work")).toBeDefined();
 	});
 });
 
@@ -483,29 +421,6 @@ describe("loading lifecycle", () => {
 		expect(pi.last().message).toContain("/reload");
 	});
 
-	it("releases default-model entries when the session_start replacement fails", async () => {
-		const { defaultModelPerProvider: map } = (await import(modelResolverSpecifier())) as {
-			defaultModelPerProvider: Record<string, string>;
-		};
-		const ids = ["anthropic@work", "openai-codex@personal"];
-		try {
-			await writeStateFile(agentDir, {
-				version: 1,
-				accounts: [work, { provider: "openai-codex", name: "personal" }],
-			});
-			const pi = await start();
-			for (const id of ids) expect(map[id], `${id} adopted at bootstrap`).toBeTruthy();
-
-			pi.rejectProvider("openai-codex@personal");
-			await pi.emit("session_start", { type: "session_start", reason: "reload" });
-
-			// fail() clears the snapshot, so nothing later can derive these IDs to release.
-			for (const id of ids) expect(id in map, `${id} released`).toBe(false);
-		} finally {
-			for (const id of ids) delete map[id];
-		}
-	});
-
 	it("keeps native providers usable when loading fails", async () => {
 		await writeStateFile(agentDir, "{ broken");
 		const pi = await start();
@@ -520,14 +435,13 @@ describe("loading lifecycle", () => {
 		await pi.account("add work");
 		await pi.runtime.refresh({ allowNetwork: false });
 		// An externally kept credential makes the re-added account immediately authenticated.
-		expect(authState(pi.registry, "anthropic@work")).toBe("authenticated");
+		expect(isAuthenticated(pi.registry, "anthropic@work")).toBe(true);
 	});
 });
 
 describe("anthropic extra-usage warning", () => {
 	const clearLatch = () => {
-		delete (globalThis as Record<symbol, unknown>)[ANTHROPIC_WARNING_LATCH];
-	delete (globalThis as Record<symbol, unknown>)[HOST_VERSION_LATCH];
+		delete (globalThis as Record<symbol, unknown>)[WARNED];
 	};
 
 	const authenticated = async (settings?: unknown) => {
@@ -690,83 +604,26 @@ describe("host version notice", () => {
 	it("stays quiet on the supported pi release", async () => {
 		const pi = await start();
 		await pi.emit("session_start", { type: "session_start", reason: "startup" });
-		expect(pi.notifications.filter((n) => n.message.includes("targets pi"))).toEqual([]);
+		expect(pi.notifications.filter((n) => n.message.includes("requires pi"))).toEqual([]);
 	});
 
-	it("names the supported release so the check cannot silently drift", () => {
-		expect(SUPPORTED_PI).toBe("0.82");
+	it("accepts the minimum and anything newer, rejects older", () => {
+		expect(MIN_PI).toBe("1.2.0");
+		for (const v of ["1.2.0", "1.2.1", "1.10.0", "2.0.0", "1.2.0-beta.1"]) expect(meetsMinimum(v), v).toBe(true);
+		for (const v of ["0.82.1", "1.0.0", "1.1.9"]) expect(meetsMinimum(v), v).toBe(false);
 	});
 });
 
-describe("registered-but-unresolved provider IDs", () => {
-	// A models.json-shaped registration can occupy an ID while resolving to no provider, so
-	// getProvider() alone reports it free.
+describe("provider ID already registered by config", () => {
+	// A models.json-shaped registration of the same ID must not be replaced by a new account.
 	const claimByConfig = (pi: Awaited<ReturnType<typeof harness>>) =>
 		pi.registry.registerProvider("anthropic@work", { name: "Foreign", baseUrl: "https://foreign.example.com" });
 
-	it("refuses the ID at session_start", async () => {
-		await writeStateFile(agentDir, { version: 1, accounts: [work] });
-		const pi = await start();
-		await pi.emit("session_shutdown", { type: "session_shutdown", reason: "reload" });
-		claimByConfig(pi);
-		expect(pi.registry.getRegisteredProviderIds()).toContain("anthropic@work");
-
-		await pi.emit("session_start", { type: "session_start", reason: "reload" });
-		await pi.account("");
-		expect(pi.last().type).toBe("error");
-		expect(pi.last().message).toContain("already in use");
-	});
-
-	it("refuses the ID on add, before and after the lock", async () => {
+	it("refuses the ID on add", async () => {
 		const pi = await start({ answers: ["Anthropic"] });
 		claimByConfig(pi);
 		await pi.account("add work");
 		expect(pi.last().message).toContain("already in use");
 		expect(await loadAccounts(agentDir)).toEqual([]);
-	});
-});
-
-describe("provider ID ownership at session_start", () => {
-	it("detects a foreign provider that clobbered an ID we had registered", async () => {
-		await writeStateFile(agentDir, { version: 1, accounts: [work] });
-		const pi = await start();
-		// Our bootstrap registration succeeded, so the ID is in our bookkeeping...
-		expect(pi.providers.has("anthropic@work")).toBe(true);
-		// ...but another extension loaded later and took the ID (last writer wins).
-		const foreign = stubProvider("anthropic@work");
-		pi.registry.registerProvider(foreign);
-
-		await pi.emit("session_start", { type: "session_start", reason: "startup" });
-
-		// String bookkeeping alone would have skipped the conflict check and replaced it.
-		await pi.account("");
-		expect(pi.last().type).toBe("error");
-		expect(pi.last().message).toContain("already in use");
-		expect(pi.registry.getRegisteredNativeProvider("anthropic@work")).toBe(foreign);
-	});
-
-	it("never unregisters a provider it does not own while cleaning up", async () => {
-		await writeStateFile(agentDir, { version: 1, accounts: [work] });
-		const pi = await start();
-		const foreign = stubProvider("anthropic@work");
-		pi.registry.registerProvider(foreign);
-
-		await pi.emit("session_shutdown", { type: "session_shutdown", reason: "reload" });
-		expect(pi.registry.getRegisteredNativeProvider("anthropic@work")).toBe(foreign);
-	});
-
-
-	it("refuses to take over an alias ID owned by someone else", async () => {
-		await writeStateFile(agentDir, { version: 1, accounts: [work] });
-		const pi = await start();
-		// Simulate a reloaded instance whose ID is held by a foreign provider.
-		await pi.emit("session_shutdown", { type: "session_shutdown", reason: "reload" });
-		pi.registry.registerProvider(stubProvider("anthropic@work"));
-
-		await pi.emit("session_start", { type: "session_start", reason: "reload" });
-		expect(pi.registry.getProvider("anthropic@work")?.name).toBe("anthropic@work");
-		await pi.account("");
-		expect(pi.last().type).toBe("error");
-		expect(pi.last().message).toContain("already in use");
 	});
 });

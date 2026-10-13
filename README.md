@@ -5,7 +5,8 @@ Pi extension for managing multiple named OAuth accounts per provider.
 Log in to Anthropic twice — `anthropic@work` and `anthropic@personal` — and switch
 between them with `/model`. Each account keeps its own login and its own usage.
 
-Supported providers: Anthropic, OpenAI Codex. Requires pi 0.82.
+Supported providers: Anthropic, OpenAI (ChatGPT subscription), and OpenAI Codex
+(legacy). Requires pi 1.2.0 or newer.
 
 ## Install
 
@@ -37,8 +38,19 @@ That's it. `anthropic@work` is now an ordinary provider, so:
 /logout                    sign out of an account
 ```
 
-A named account starts on the same default model its provider normally uses, so signing
-in leaves you ready to go. To start on a different one, name it in `/settings`:
+For a ChatGPT subscription, choose **OpenAI** when adding an account. Pi prepares
+`/login openai@work`, which uses Pi's standard **Sign in with ChatGPT** flow.
+
+**OpenAI Codex** keeps the legacy flow at `openai-codex@work`. Existing accounts
+remain unchanged. An `openai@work` account needs its own login; it does not reuse
+the native `openai` login, an API key, or an `openai-codex@work` credential.
+
+Named accounts follow the native provider's `models.json` settings, including any
+`headers` you set on it. Those headers are sent with every named account of that
+provider, and an `Authorization` header there replaces the account's own login.
+
+After signing in for the first time, pick a model with `/model`. To start on a named
+account's model by default, name it in `/settings`:
 
 ```json
 { "defaultProvider": "anthropic@work", "defaultModel": "claude-sonnet-5" }
@@ -59,6 +71,7 @@ in leaves you ready to go. To start on a different one, name it in `/settings`:
 NAME      PROVIDER      ALIAS ID            STATUS
 personal  Anthropic     anthropic@personal  not authenticated
 work      Anthropic     anthropic@work      authenticated
+work      OpenAI        openai@work         authenticated
 work      OpenAI Codex  openai-codex@work   authenticated
 ```
 
@@ -70,7 +83,7 @@ if either is still needed.
 
 Names are trimmed and lowercased, and must be 1–32 characters of `a-z`, `0-9`, `_` or
 `-`, starting with a letter or digit. The same name can be used once per provider, so
-`anthropic@work` and `openai-codex@work` can both exist.
+`anthropic@work`, `openai@work`, and `openai-codex@work` can all exist.
 
 ## Anthropic subscription usage
 

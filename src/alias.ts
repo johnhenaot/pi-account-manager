@@ -1,18 +1,14 @@
 import type { Api, Model, Provider, StreamOptions } from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
-import { type Account, aliasDisplayName, aliasId, type ProviderId } from "./account.ts";
+import { type Account, accountId, type ProviderId, PROVIDERS } from "./account.ts";
 
-export function bundledProvider(provider: ProviderId): Provider | undefined {
-	return builtinProviders().find((candidate) => candidate.id === provider);
-}
+export const bundledProvider = (provider: ProviderId): Provider | undefined =>
+	builtinProviders().find((candidate) => candidate.id === provider);
 
 export function buildAlias(base: Provider | undefined, account: Account): Provider {
-	const id = aliasId(account.provider, account.name);
-	if (!base) throw new Error(`provider "${account.provider}" is not available.`);
-	if (base.id !== account.provider) throw new Error(`provider "${account.provider}" resolved to "${base.id}".`);
-	const oauth = base.auth.oauth;
-	if (!oauth) throw new Error(`provider "${account.provider}" has no OAuth flow.`);
-	if (base.getModels().length === 0) throw new Error(`provider "${account.provider}" has no models.`);
+	const id = accountId(account);
+	const oauth = base?.auth.oauth;
+	if (!base || !oauth) throw new Error(`provider "${account.provider}" has no OAuth flow.`);
 
 	const reprovision = (models: readonly Model<Api>[], provider: string) =>
 		models.map((model) => ({ ...model, provider }));
@@ -42,7 +38,7 @@ export function buildAlias(base: Provider | undefined, account: Account): Provid
 
 	return {
 		id,
-		name: aliasDisplayName(account.provider, account.name),
+		name: `${PROVIDERS[account.provider]} (${account.name})`,
 		baseUrl: base.baseUrl,
 		headers: base.headers,
 		// Omitting `apiKey` is the isolation: the alias can only reach its own OAuth token,

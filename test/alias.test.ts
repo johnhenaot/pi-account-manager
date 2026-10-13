@@ -3,7 +3,7 @@ import { normalizeContext } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Account } from "../src/account.ts";
 import { buildAlias, bundledProvider } from "../src/alias.ts";
-import { authState } from "../src/index.ts";
+import { isAuthenticated } from "../src/index.ts";
 import { cleanupAgentDir, makeAgentDir, oauthCredential, realRegistry, stubProvider } from "./helpers.ts";
 
 let agentDir: string;
@@ -85,10 +85,8 @@ describe("buildAlias", () => {
 	});
 
 	it("refuses a base that cannot back an alias", () => {
-		expect(() => buildAlias(undefined, work)).toThrow("not available");
+		expect(() => buildAlias(undefined, work)).toThrow("no OAuth flow");
 		expect(() => buildAlias(stubProvider("anthropic", { oauth: false }), work)).toThrow("no OAuth flow");
-		expect(() => buildAlias(stubProvider("anthropic", { models: 0 }), work)).toThrow("no models");
-		expect(() => buildAlias(stubProvider("openai"), work)).toThrow('resolved to "openai"');
 	});
 });
 
@@ -119,7 +117,7 @@ describe("pi registry contract", () => {
 
 		expect(runtime.getProviderAuthStatus("anthropic@work").configured).toBe(false);
 		expect((await runtime.getAvailable()).some((m) => m.provider === "anthropic@work")).toBe(false);
-		expect(authState(registry, "anthropic@work")).toBe("not authenticated");
+		expect(isAuthenticated(registry, "anthropic@work")).toBe(false);
 
 		await credentials.modify("anthropic@work", async () => oauthCredential());
 		await runtime.refresh({ allowNetwork: false });
@@ -127,7 +125,7 @@ describe("pi registry contract", () => {
 		expect(runtime.getProviderAuthStatus("anthropic@work").configured).toBe(true);
 		expect(runtime.isUsingOAuth("anthropic@work")).toBe(true);
 		expect((await runtime.getAvailable()).some((m) => m.provider === "anthropic@work")).toBe(true);
-		expect(authState(registry, "anthropic@work")).toBe("authenticated");
+		expect(isAuthenticated(registry, "anthropic@work")).toBe(true);
 	});
 
 	it("keeps credentials isolated per alias", async () => {
@@ -175,7 +173,7 @@ describe("pi registry contract", () => {
 		registry.registerProvider(buildAlias(registry.getProvider("anthropic"), work));
 		registry.unregisterProvider("anthropic@work");
 		expect(runtime.getProvider("anthropic@work")).toBeUndefined();
-		expect(authState(registry, "anthropic@work")).toBe("status unavailable");
+		expect(isAuthenticated(registry, "anthropic@work")).toBe(false);
 		expect(registry.getAll().filter((m) => m.provider === "anthropic")).toHaveLength(nativeModelCount);
 	});
 });

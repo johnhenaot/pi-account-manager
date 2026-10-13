@@ -19,7 +19,6 @@ import {
 } from "./account.ts";
 import { buildAlias, bundledProvider } from "./alias.ts";
 import { parseCommand, resolveRemoveTarget, USAGE } from "./command.ts";
-import { adoptNativeDefaultModel, releaseDefaultModel } from "./default-model.ts";
 import { EMPTY_LIST, formatList } from "./list.ts";
 import { loadAccounts, mutateAccounts } from "./state.ts";
 
@@ -33,7 +32,18 @@ export const HOST_VERSION_LATCH = Symbol.for("pi-account-manager.hostVersionWarn
 
 // A peer range cannot express this: pi supplies the bundled packages at load time, so the
 // package manager never sees which pi binary runs.
-export const SUPPORTED_PI = "1.0";
+export const MIN_PI = "1.2.0";
+
+/** Numeric major.minor.patch compare; a prerelease counts as its release. */
+export const meetsMinimum = (version: string, minimum = MIN_PI): boolean => {
+	const parse = (v: string) => v.split("-")[0].split(".").map(Number);
+	const [host, min] = [parse(version), parse(minimum)];
+	for (let i = 0; i < 3; i++) {
+		const diff = (host[i] ?? 0) - (min[i] ?? 0);
+		if (diff) return diff > 0;
+	}
+	return true;
+};
 
 type LatchHolder = Record<symbol, true | undefined>;
 
@@ -107,6 +117,7 @@ export default async function (pi: ExtensionAPI) {
 	let registered = new Map<string, Provider>();
 	let loadError: string | undefined;
 
+	// SAFETY: only this extension's Symbol.for keys are read or written on globalThis.
 	const latch = globalThis as unknown as LatchHolder;
 
 	const fail = (error: unknown) => {
@@ -114,14 +125,6 @@ export default async function (pi: ExtensionAPI) {
 		snapshot = [];
 		registered = new Map();
 	};
-
-	const adoptAllDefaults = () =>
-		Promise.all(
-			snapshot.map((account) => {
-				const alias = registered.get(accountId(account));
-				return alias ? adoptNativeDefaultModel(account.provider, alias) : undefined;
-			}),
-		);
 
 	const isOwnAnthropicAlias = (providerId: string): boolean =>
 		snapshot.some((account) => account.provider === "anthropic" && accountId(account) === providerId);
@@ -144,7 +147,6 @@ export default async function (pi: ExtensionAPI) {
 	try {
 		snapshot = await loadAccounts(agentDir);
 		registered = registerAll(pi, snapshot, bundledProvider);
-		await adoptAllDefaults();
 	} catch (error) {
 		fail(error);
 	}
@@ -152,22 +154,20 @@ export default async function (pi: ExtensionAPI) {
 	// Rebuilt against the effective registry, which includes any models.json overlay. Through
 	// `pi` rather than ctx.modelRegistry, because only that path refreshes the live model.
 	pi.on("session_start", async (_event, ctx) => {
-		if (ctx.mode === "tui" && !latch[HOST_VERSION_LATCH] && !VERSION.startsWith(`${SUPPORTED_PI}.`)) {
+		if (ctx.mode === "tui" && !latch[HOST_VERSION_LATCH] && !meetsMinimum(VERSION)) {
 			latch[HOST_VERSION_LATCH] = true;
 			ctx.ui.notify(
-				`pi-account-manager targets pi ${SUPPORTED_PI}; this host is ${VERSION}. Named accounts may not work correctly.`,
+				`pi-account-manager requires pi ${MIN_PI} or newer; this host is ${VERSION}. Named accounts may not work correctly.`,
 				"warning",
 			);
 		}
 
 		if (!loadError && snapshot.length > 0) {
 			/** Single exit for both giving-up paths, so neither can forget half the cleanup. */
-			const abandon = async (owned: Map<string, Provider>, error: unknown) => {
+			const abandon = (owned: Map<string, Provider>, error: unknown) => {
 				for (const [id, provider] of owned) {
 					if (stillOurs(ctx.modelRegistry, id, provider)) pi.unregisterProvider(id);
 				}
-				// Before fail(), which clears the snapshot these IDs are derived from.
-				await Promise.all(snapshot.map((account) => releaseDefaultModel(accountId(account))));
 				fail(error);
 			};
 
@@ -175,16 +175,13 @@ export default async function (pi: ExtensionAPI) {
 				.map(accountId)
 				.filter((id) => occupiedByOther(ctx.modelRegistry, id, registered.get(id)));
 			if (taken.length > 0) {
-				await abandon(registered, new Error(`provider ID "${taken[0]}" is already in use.`));
+				abandon(registered, new Error(`provider ID "${taken[0]}" is already in use.`));
 			} else {
 				try {
 					registered = registerAll(pi, snapshot, (provider) => ctx.modelRegistry.getProvider(provider));
-					// Re-adopted from the effective catalogs, which may differ from the bundled ones.
-					await adoptAllDefaults();
 				} catch (error) {
-					// `registered` deliberately, not a pre-call copy: if registerAll succeeded and
-					// adoption then failed, the new aliases are the ones holding the IDs.
-					await abandon(registered, error);
+					// registerAll rolled back its own partial work, so only the bootstrap aliases remain.
+					abandon(registered, error);
 				}
 			}
 		}
@@ -205,7 +202,6 @@ export default async function (pi: ExtensionAPI) {
 		for (const [id, provider] of registered) {
 			if (stillOurs(ctx.modelRegistry, id, provider)) ctx.modelRegistry.unregisterProvider(id);
 		}
-		await Promise.all([...registered.keys()].map(releaseDefaultModel));
 		registered = new Map();
 	});
 
@@ -287,8 +283,6 @@ export default async function (pi: ExtensionAPI) {
 			return;
 		}
 
-		await adoptNativeDefaultModel(provider, alias);
-
 		const login = `/login ${id}`;
 		// Not trimmed: a fresh pi editor is exactly "", so whitespace is a real draft.
 		if (ctx.ui.getEditorText() === "") {
@@ -358,7 +352,6 @@ export default async function (pi: ExtensionAPI) {
 			return;
 		}
 
-		await releaseDefaultModel(id);
 		ctx.ui.notify(`Removed ${id}. Its credential is untouched; use /logout to remove that.`, "info");
 	};
 

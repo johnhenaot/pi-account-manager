@@ -6,7 +6,7 @@ Log in to Anthropic twice — `anthropic@work` and `anthropic@personal` — and 
 between them with `/model`. Each account keeps its own login and its own usage.
 
 Supported providers: Anthropic, OpenAI (ChatGPT subscription), and OpenAI Codex
-(legacy). Targets pi 1.0, tested with pi 1.0.4.
+(legacy). Requires pi 1.2.0 or newer.
 
 ## Install
 
@@ -40,14 +40,17 @@ That's it. `anthropic@work` is now an ordinary provider, so:
 
 For a ChatGPT subscription, choose **OpenAI** when adding an account. Pi prepares
 `/login openai@work`, which uses Pi's standard **Sign in with ChatGPT** flow.
-This flow was introduced in pi 0.99; update Pi before using it.
 
 **OpenAI Codex** keeps the legacy flow at `openai-codex@work`. Existing accounts
 remain unchanged. An `openai@work` account needs its own login; it does not reuse
 the native `openai` login, an API key, or an `openai-codex@work` credential.
 
-A named account starts on the same default model its provider normally uses, so signing
-in leaves you ready to go. To start on a different one, name it in `/settings`:
+Named accounts follow the native provider's `models.json` settings, including any
+`headers` you set on it. Those headers are sent with every named account of that
+provider, and an `Authorization` header there replaces the account's own login.
+
+After signing in for the first time, pick a model with `/model`. To start on a named
+account's model by default, name it in `/settings`:
 
 ```json
 { "defaultProvider": "anthropic@work", "defaultModel": "claude-sonnet-5" }

@@ -4,9 +4,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Account } from "../src/account.ts";
 import { USAGE } from "../src/command.ts";
-import { ANTHROPIC_EXTRA_USAGE_WARNING, ANTHROPIC_WARNING_LATCH, authState, HOST_VERSION_LATCH, SUPPORTED_PI } from "../src/index.ts";
+import { ANTHROPIC_EXTRA_USAGE_WARNING, ANTHROPIC_WARNING_LATCH, authState, HOST_VERSION_LATCH, MIN_PI, meetsMinimum } from "../src/index.ts";
 import { EMPTY_LIST } from "../src/list.ts";
-import { modelResolverSpecifier } from "../src/default-model.ts";
 import { loadAccounts, statePath } from "../src/state.ts";
 import {
 	cleanupAgentDir,
@@ -397,19 +396,6 @@ describe("/account remove", () => {
 		},
 	);
 
-	it("gives back the default-model entry so a later owner of the ID is not poisoned", async () => {
-		const { defaultModelPerProvider: map } = (await import(modelResolverSpecifier())) as {
-			defaultModelPerProvider: Record<string, string>;
-		};
-		const pi = await seeded([work]);
-		expect(map["anthropic@work"]).toBeTruthy();
-
-		await pi.account("remove anthropic@work");
-		expect(await loadAccounts(agentDir)).toEqual([]);
-		// A provider that later takes this ID must not inherit our default model.
-		expect("anthropic@work" in map).toBe(false);
-	});
-
 	it("leaves a foreign provider alone when removing the account behind its ID", async () => {
 		const pi = await seeded([work]);
 		const foreign = stubProvider("anthropic@work");
@@ -519,29 +505,6 @@ describe("loading lifecycle", () => {
 		expect(pi.last().type).toBe("error");
 		await pi.account("add other");
 		expect(pi.last().message).toContain("/reload");
-	});
-
-	it("releases default-model entries when the session_start replacement fails", async () => {
-		const { defaultModelPerProvider: map } = (await import(modelResolverSpecifier())) as {
-			defaultModelPerProvider: Record<string, string>;
-		};
-		const ids = ["anthropic@work", "openai-codex@personal"];
-		try {
-			await writeStateFile(agentDir, {
-				version: 1,
-				accounts: [work, { provider: "openai-codex", name: "personal" }],
-			});
-			const pi = await start();
-			for (const id of ids) expect(map[id], `${id} adopted at bootstrap`).toBeTruthy();
-
-			pi.rejectProvider("openai-codex@personal");
-			await pi.emit("session_start", { type: "session_start", reason: "reload" });
-
-			// fail() clears the snapshot, so nothing later can derive these IDs to release.
-			for (const id of ids) expect(id in map, `${id} released`).toBe(false);
-		} finally {
-			for (const id of ids) delete map[id];
-		}
 	});
 
 	it("keeps native providers usable when loading fails", async () => {
@@ -728,11 +691,14 @@ describe("host version notice", () => {
 	it("stays quiet on the supported pi release", async () => {
 		const pi = await start();
 		await pi.emit("session_start", { type: "session_start", reason: "startup" });
-		expect(pi.notifications.filter((n) => n.message.includes("targets pi"))).toEqual([]);
+		expect(pi.notifications.filter((n) => n.message.includes("requires pi"))).toEqual([]);
 	});
 
-	it("names the supported release so the check cannot silently drift", () => {
-		expect(SUPPORTED_PI).toBe("1.0");
+	it("accepts the minimum and anything newer, rejects older", () => {
+		expect(MIN_PI).toBe("1.2.0");
+		for (const v of ["1.2.0", "1.2.1", "1.10.0", "2.0.0", "1.2.0-beta.1"]) expect(meetsMinimum(v), v).toBe(true);
+		for (const v of ["0.82.1", "1.0.0", "1.1.9"]) expect(meetsMinimum(v), v).toBe(false);
+		expect(meetsMinimum("1.2.0", "1.10.0")).toBe(false);
 	});
 });
 

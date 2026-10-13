@@ -46,7 +46,8 @@ export function buildAlias(base: Provider | undefined, account: Account): Provid
 		baseUrl: base.baseUrl,
 		headers: base.headers,
 		// Omitting `apiKey` is the isolation: the alias can only reach its own OAuth token,
-		// never the native key or an ambient credential.
+		// never the native key or an ambient credential. Exception (documented in the README):
+		// headers that models.json attaches to the native provider's OAuth still apply.
 		auth: { oauth },
 		getModels: () => reprovision(base.getModels(), id),
 		filterModels:

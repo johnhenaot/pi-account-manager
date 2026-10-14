@@ -13,7 +13,10 @@ export function buildAlias(base: Provider | undefined, account: Account): Provid
 	const reprovision = (models: readonly Model<Api>[], provider: string) =>
 		models.map((model) => ({ ...model, provider }));
 
-	const streamOptions = <T extends StreamOptions>(model: Model<Api>, options: T | undefined): T | undefined => {
+	const streamRequest = <T extends StreamOptions>(model: Model<Api>, options: T | undefined): {
+		model: Model<Api>;
+		options: T | undefined;
+	} => {
 		// Pi's Responses adapter recognizes ChatGPT subscription tokens only on the
 		// literal `openai` provider. Mirror its payload omissions without changing the
 		// alias ID used for credentials, stream attribution, and transcript replay.
@@ -21,17 +24,25 @@ export function buildAlias(base: Provider | undefined, account: Account): Provid
 			account.provider !== "openai" || model.api !== "openai-responses" ||
 			model.baseUrl !== "https://api.openai.com/v1" ||
 			options?.apiKey === undefined || options.apiKey.startsWith("sk-")
-		) return options;
+		) return { model, options };
+		// Newer Pi catalogs enable configuration_update effort items. The same
+		// subscription exemption must run before payload construction so reasoning.effort
+		// keeps the requested level instead of being pinned to medium. Copy compat too:
+		// alias catalogs share it with native models. This field is absent in Pi 1.2.0.
+		const compat = { ...model.compat, supportsMidConvoEffort: false };
 		return {
-			...options,
-			onPayload: async (payload, requestModel) => {
-				const params = payload as Record<string, unknown>;
-				delete params.max_output_tokens;
-				delete params.temperature;
-				delete params.prompt_cache_retention;
-				delete params.prompt_cache_options;
-				// Native Pi applies these omissions before the caller's hook too.
-				return options.onPayload?.(payload, requestModel);
+			model: { ...model, compat },
+			options: {
+				...options,
+				onPayload: async (payload, requestModel) => {
+					const params = payload as Record<string, unknown>;
+					delete params.max_output_tokens;
+					delete params.temperature;
+					delete params.prompt_cache_retention;
+					delete params.prompt_cache_options;
+					// Native Pi applies these omissions before the caller's hook too.
+					return options.onPayload?.(payload, requestModel);
+				},
 			},
 		};
 	};
@@ -56,7 +67,13 @@ export function buildAlias(base: Provider | undefined, account: Account): Provid
 			}),
 		// The model keeps `provider: <alias id>`, which is what makes pi attribute every stream
 		// event, message, and session entry to this account.
-		stream: (model, context, options) => base.stream(model, context, streamOptions(model, options)),
-		streamSimple: (model, context, options) => base.streamSimple(model, context, streamOptions(model, options)),
+		stream: (model, context, options) => {
+			const request = streamRequest(model, options);
+			return base.stream(request.model, context, request.options);
+		},
+		streamSimple: (model, context, options) => {
+			const request = streamRequest(model, options);
+			return base.streamSimple(request.model, context, request.options);
+		},
 	};
 }

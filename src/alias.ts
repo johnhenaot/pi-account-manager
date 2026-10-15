@@ -13,28 +13,33 @@ export function buildAlias(base: Provider | undefined, account: Account): Provid
 	const reprovision = (models: readonly Model<Api>[], provider: string) =>
 		models.map((model) => ({ ...model, provider }));
 
-	const streamOptions = <T extends StreamOptions>(model: Model<Api>, options: T | undefined): T | undefined => {
-		// Pi's Responses adapter recognizes ChatGPT subscription tokens only on the
-		// literal `openai` provider. Mirror its payload omissions without changing the
-		// alias ID used for credentials, stream attribution, and transcript replay.
-		if (
-			account.provider !== "openai" || model.api !== "openai-responses" ||
-			model.baseUrl !== "https://api.openai.com/v1" ||
-			options?.apiKey === undefined || options.apiKey.startsWith("sk-")
-		) return options;
-		return {
-			...options,
-			onPayload: async (payload, requestModel) => {
-				const params = payload as Record<string, unknown>;
-				delete params.max_output_tokens;
-				delete params.temperature;
-				delete params.prompt_cache_retention;
-				delete params.prompt_cache_options;
-				// Native Pi applies these omissions before the caller's hook too.
-				return options.onPayload?.(payload, requestModel);
-			},
+	const isChatGPTSubscription = (model: Model<Api>, options: StreamOptions | undefined) =>
+		account.provider === "openai" && model.api === "openai-responses" &&
+		model.baseUrl === "https://api.openai.com/v1" &&
+		options?.apiKey !== undefined && !options.apiKey.startsWith("sk-");
+
+	const withoutMidConvoEffort = (model: Model<Api>) => ({
+		...model,
+		compat: { ...model.compat, supportsMidConvoEffort: false },
+	});
+
+	const omitUnsupportedFields = (options: StreamOptions | undefined): StreamOptions["onPayload"] =>
+		async (payload, requestModel) => {
+			const params = payload as Record<string, unknown>;
+			delete params.max_output_tokens;
+			delete params.temperature;
+			delete params.prompt_cache_retention;
+			delete params.prompt_cache_options;
+			return options?.onPayload?.(payload, requestModel);
 		};
-	};
+
+	const streamRequest = <T extends StreamOptions | undefined>(model: Model<Api>, options: T) =>
+		isChatGPTSubscription(model, options)
+			? {
+				model: withoutMidConvoEffort(model),
+				options: { ...options, onPayload: omitUnsupportedFields(options) } satisfies T,
+			}
+			: { model, options };
 
 	return {
 		id,
@@ -56,7 +61,13 @@ export function buildAlias(base: Provider | undefined, account: Account): Provid
 			}),
 		// The model keeps `provider: <alias id>`, which is what makes pi attribute every stream
 		// event, message, and session entry to this account.
-		stream: (model, context, options) => base.stream(model, context, streamOptions(model, options)),
-		streamSimple: (model, context, options) => base.streamSimple(model, context, streamOptions(model, options)),
+		stream: (model, context, options) => {
+			const request = streamRequest(model, options);
+			return base.stream(request.model, context, request.options);
+		},
+		streamSimple: (model, context, options) => {
+			const request = streamRequest(model, options);
+			return base.streamSimple(request.model, context, request.options);
+		},
 	};
 }

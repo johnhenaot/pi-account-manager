@@ -23,6 +23,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
 	vi.unstubAllGlobals();
+	vi.restoreAllMocks();
 	vi.unstubAllEnvs();
 	await cleanupAgentDir(agentDir);
 });
@@ -157,6 +158,30 @@ describe("OpenAI alias transport", () => {
 				expect(onPayload).toHaveBeenCalledTimes(1);
 				expect(requests[0].body.metadata).toEqual({ source: "fake-hook-replacement" });
 				expect(requests[0].body.temperature).toBe(0.8);
+			});
+
+			it.each(["subscription", "custom endpoint", "API key"] as const)("gates mid-conversation effort updates for %s", async (kind) => {
+				const { base, model } = fixture();
+				const delegate = vi.spyOn(base, method);
+				const alias = buildAlias(base, { provider: "openai", name: "work" });
+				const { fetch, requests } = captureRequests();
+				// Newer catalogs enable the flag; the alias must override it, not just fill it in.
+				const effortModel = { ...model, compat: { ...model.compat, supportsMidConvoEffort: true } };
+				const requestModel = kind === "custom endpoint" ? { ...effortModel, baseUrl: "https://fake-openai.example/v1" } : effortModel;
+				const snapshot = structuredClone(requestModel);
+				// stream() reads reasoningEffort; only streamSimple() maps reasoning onto it.
+				const effort = method === "stream" ? { reasoningEffort: "high" as const } : { reasoning: "high" as const };
+				const options = { ...requestOptions(fetch), apiKey: kind === "API key" ? "sk-fake-api-key-for-tests" : FAKE_TOKEN, ...effort };
+				await alias[method](requestModel, transcript(), options).result();
+				const [sentModel, , sentOptions] = delegate.mock.calls[0];
+				expect(requestModel).toEqual(snapshot);
+				expect(sentOptions).toMatchObject(effort);
+				if (kind !== "subscription") return expect(sentModel).toBe(requestModel);
+				expect(requests[0].body.reasoning).toMatchObject({ effort: "high" });
+				expect(requests[0].body.input).not.toContainEqual(expect.objectContaining({ type: "configuration_update" }));
+				expect(sentModel).not.toBe(requestModel);
+				expect(sentModel.compat).not.toBe(requestModel.compat);
+				expect(sentModel).toEqual({ ...requestModel, compat: { ...requestModel.compat, supportsMidConvoEffort: false } });
 			});
 
 			it.each(["custom endpoint", "API key"] as const)("leaves ordinary payload fields intact for %s", async (kind) => {

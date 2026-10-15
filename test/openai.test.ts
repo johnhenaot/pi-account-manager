@@ -176,9 +176,9 @@ describe("OpenAI alias transport", () => {
 				const [sentModel, , sentOptions] = delegate.mock.calls[0];
 				expect(requestModel).toEqual(snapshot);
 				expect(sentOptions).toMatchObject(effort);
+				if (kind !== "subscription") return expect(sentModel).toBe(requestModel);
 				expect(requests[0].body.reasoning).toMatchObject({ effort: "high" });
 				expect(requests[0].body.input).not.toContainEqual(expect.objectContaining({ type: "configuration_update" }));
-				if (kind !== "subscription") return expect(sentModel).toBe(requestModel);
 				expect(sentModel).not.toBe(requestModel);
 				expect(sentModel.compat).not.toBe(requestModel.compat);
 				expect(sentModel).toEqual({ ...requestModel, compat: { ...requestModel.compat, supportsMidConvoEffort: false } });

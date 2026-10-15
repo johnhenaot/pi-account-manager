@@ -23,6 +23,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
 	vi.unstubAllGlobals();
+	vi.restoreAllMocks();
 	vi.unstubAllEnvs();
 	await cleanupAgentDir(agentDir);
 });
@@ -157,6 +158,28 @@ describe("OpenAI alias transport", () => {
 				expect(onPayload).toHaveBeenCalledTimes(1);
 				expect(requests[0].body.metadata).toEqual({ source: "fake-hook-replacement" });
 				expect(requests[0].body.temperature).toBe(0.8);
+			});
+
+			it.each(["subscription", "custom endpoint", "API key"] as const)("gates mid-conversation effort updates for %s", async (kind) => {
+				const { base, model } = fixture();
+				const delegate = vi.spyOn(base, method);
+				const alias = buildAlias(base, { provider: "openai", name: "work" });
+				const { fetch } = captureRequests();
+				const requestModel = kind === "custom endpoint" ? { ...model, baseUrl: "https://fake-openai.example/v1" } : model;
+				const snapshot = structuredClone(requestModel);
+				const options = {
+					...requestOptions(fetch),
+					apiKey: kind === "API key" ? "sk-fake-api-key-for-tests" : FAKE_TOKEN,
+					reasoning: "high" as const,
+				};
+				await alias[method](requestModel, transcript(), options).result();
+				const [sentModel, , sentOptions] = delegate.mock.calls[0];
+				expect(requestModel).toEqual(snapshot);
+				expect(sentOptions).toMatchObject({ reasoning: "high" });
+				if (kind !== "subscription") return expect(sentModel).toBe(requestModel);
+				expect(sentModel).not.toBe(requestModel);
+				expect(sentModel.compat).not.toBe(requestModel.compat);
+				expect(sentModel).toEqual({ ...requestModel, compat: { ...requestModel.compat, supportsMidConvoEffort: false } });
 			});
 
 			it.each(["custom endpoint", "API key"] as const)("leaves ordinary payload fields intact for %s", async (kind) => {

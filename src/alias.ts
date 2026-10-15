@@ -28,7 +28,7 @@ export function buildAlias(base: Provider | undefined, account: Account): Provid
 		// Newer Pi catalogs enable configuration_update effort items. The same
 		// subscription exemption must run before payload construction so reasoning.effort
 		// keeps the requested level instead of being pinned to medium. Copy compat too:
-		// alias catalogs share it with native models. This field is absent in Pi 1.2.0.
+		// alias catalogs share it with native models. Pi 1.2.0's Responses adapter ignores it.
 		const compat = { ...model.compat, supportsMidConvoEffort: false };
 		return {
 			model: { ...model, compat },

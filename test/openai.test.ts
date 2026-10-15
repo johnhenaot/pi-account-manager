@@ -164,18 +164,20 @@ describe("OpenAI alias transport", () => {
 				const { base, model } = fixture();
 				const delegate = vi.spyOn(base, method);
 				const alias = buildAlias(base, { provider: "openai", name: "work" });
-				const { fetch } = captureRequests();
-				const requestModel = kind === "custom endpoint" ? { ...model, baseUrl: "https://fake-openai.example/v1" } : model;
+				const { fetch, requests } = captureRequests();
+				// Newer catalogs enable the flag; the alias must override it, not just fill it in.
+				const effortModel = { ...model, compat: { ...model.compat, supportsMidConvoEffort: true } };
+				const requestModel = kind === "custom endpoint" ? { ...effortModel, baseUrl: "https://fake-openai.example/v1" } : effortModel;
 				const snapshot = structuredClone(requestModel);
-				const options = {
-					...requestOptions(fetch),
-					apiKey: kind === "API key" ? "sk-fake-api-key-for-tests" : FAKE_TOKEN,
-					reasoning: "high" as const,
-				};
+				// stream() reads reasoningEffort; only streamSimple() maps reasoning onto it.
+				const effort = method === "stream" ? { reasoningEffort: "high" as const } : { reasoning: "high" as const };
+				const options = { ...requestOptions(fetch), apiKey: kind === "API key" ? "sk-fake-api-key-for-tests" : FAKE_TOKEN, ...effort };
 				await alias[method](requestModel, transcript(), options).result();
 				const [sentModel, , sentOptions] = delegate.mock.calls[0];
 				expect(requestModel).toEqual(snapshot);
-				expect(sentOptions).toMatchObject({ reasoning: "high" });
+				expect(sentOptions).toMatchObject(effort);
+				expect(requests[0].body.reasoning).toMatchObject({ effort: "high" });
+				expect(requests[0].body.input).not.toContainEqual(expect.objectContaining({ type: "configuration_update" }));
 				if (kind !== "subscription") return expect(sentModel).toBe(requestModel);
 				expect(sentModel).not.toBe(requestModel);
 				expect(sentModel.compat).not.toBe(requestModel.compat);

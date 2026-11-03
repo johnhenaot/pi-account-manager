@@ -8,6 +8,23 @@ between them with `/model`. Each account keeps its own login and its own usage.
 Supported providers: Anthropic, OpenAI (ChatGPT subscription), and OpenAI Codex
 (legacy). Requires pi 1.2.0 or newer.
 
+## Draft: Anthropic message threads
+
+This draft enables message threads for named Anthropic accounts on the direct
+`https://api.anthropic.com` endpoint, while preserving explicit
+`compat.supportsMessageThreads` overrides. Gateways are not opted in automatically.
+The account's alias ID and request options remain unchanged; Pi owns continuation
+state, account-switch invalidation, fallback to a full request, and cleanup.
+
+**Do not merge or release yet.** This needs a published Pi release containing
+[Anthropic message threads (#11545)](https://github.com/earendil-works/pi/pull/11545).
+The existing dependency versions have not been presented as supporting threads.
+Before merging, set the peer minimum and dev dependencies to that release, update
+the lockfile, and test actual SDK continuations, account switching, expired-thread
+recovery, and cache-warming isolation. The current typecheck is blocked because the pinned SDK does not yet declare
+`supportsMessageThreads`. Alias tests check delegation only; they do not exercise
+server-side continuation or live OAuth.
+
 ## Install
 
 ```bash
@@ -95,3 +112,4 @@ To silence it entirely, set this in `/settings`:
 ```json
 { "warnings": { "anthropicExtraUsage": false } }
 ```
+

@@ -33,13 +33,21 @@ export function buildAlias(base: Provider | undefined, account: Account): Provid
 			return options?.onPayload?.(payload, requestModel);
 		};
 
-	const streamRequest = <T extends StreamOptions | undefined>(model: Model<Api>, options: T) =>
-		isChatGPTSubscription(model, options)
+	const streamRequest = <T extends StreamOptions | undefined>(model: Model<Api>, options: T) => {
+		if (account.provider === "anthropic" && model.api === "anthropic-messages" &&
+			URL.canParse(model.baseUrl) && new URL(model.baseUrl).origin === "https://api.anthropic.com") {
+			// The alias changes Pi's provider-name default; keep explicit model overrides.
+			const compat = { supportsMessageThreads: true, ...model.compat };
+			compat.supportsMessageThreads ??= true;
+			model = { ...model, compat };
+		}
+		return isChatGPTSubscription(model, options)
 			? {
 				model: withoutMidConvoEffort(model),
 				options: { ...options, onPayload: omitUnsupportedFields(options) } satisfies T,
 			}
 			: { model, options };
+	};
 
 	return {
 		id,
@@ -71,3 +79,4 @@ export function buildAlias(base: Provider | undefined, account: Account): Provid
 		},
 	};
 }
+

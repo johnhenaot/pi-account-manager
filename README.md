@@ -19,12 +19,6 @@ state, invalidation when switching aliases, recovery with a full request, and
 session cleanup. Cache-warming requests do not consume or replace the conversation's
 thread. Threads require a session ID and enabled prompt caching.
 
-This uses the published Pi 1.5.2 SDK directly, with no backward-compatibility layer.
-The tests exercise the real provider, runtime, and Anthropic SDK with an injected
-HTTP transport, covering continuation, account switching and credential isolation,
-expired/rejected threads, cache warming, and cleanup. They do not make live OAuth
-or Anthropic requests.
-
 ## Install
 
 ```bash

@@ -608,9 +608,9 @@ describe("host version notice", () => {
 	});
 
 	it("accepts the minimum and anything newer, rejects older", () => {
-		expect(MIN_PI).toBe("1.2.0");
-		for (const v of ["1.2.0", "1.2.1", "1.10.0", "2.0.0", "1.2.0-beta.1"]) expect(meetsMinimum(v), v).toBe(true);
-		for (const v of ["0.82.1", "1.0.0", "1.1.9"]) expect(meetsMinimum(v), v).toBe(false);
+		expect(MIN_PI).toBe("1.5.2");
+		for (const v of ["1.5.2", "1.5.3", "1.10.0", "2.0.0"]) expect(meetsMinimum(v), v).toBe(true);
+		for (const v of ["0.82.1", "1.2.0", "1.5.0", "1.5.1"]) expect(meetsMinimum(v), v).toBe(false);
 	});
 });
 

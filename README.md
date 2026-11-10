@@ -14,10 +14,11 @@ Named Anthropic accounts use Pi's message threads on the direct
 `https://api.anthropic.com` endpoint. Explicit `compat.supportsMessageThreads`
 overrides are preserved; gateways are not opted in automatically.
 
-The account's alias ID and request options remain unchanged. Pi owns continuation
-state, invalidation when switching aliases, recovery with a full request, and
-session cleanup. Cache-warming requests do not consume or replace the conversation's
-thread. Threads require a session ID and enabled prompt caching.
+Alias identity is preserved. Thread sessions are scoped to the named account and
+its credential, so replacing a login or disabling threads for one account does
+not affect another. Pi owns continuation and recovery; session cleanup also clears
+the scoped resources. Cache warming does not replace the conversation thread.
+Threads require a session ID and enabled prompt caching.
 
 ## Install
 
@@ -106,4 +107,3 @@ To silence it entirely, set this in `/settings`:
 ```json
 { "warnings": { "anthropicExtraUsage": false } }
 ```
-

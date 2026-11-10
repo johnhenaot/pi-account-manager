@@ -1,6 +1,35 @@
+import { createHash } from "node:crypto";
 import type { Api, Model, Provider, StreamOptions } from "@earendil-works/pi-ai";
+import { cleanupSessionResources, registerSessionResourceCleanup } from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { type Account, accountId, type ProviderId, PROVIDERS } from "./account.ts";
+
+const threadSessions = new Map<string, string>();
+
+registerSessionResourceCleanup((sessionId) => {
+	if (!sessionId) {
+		threadSessions.clear();
+		return;
+	}
+	for (const [scopedId, parentId] of threadSessions) {
+		if (parentId !== sessionId) continue;
+		threadSessions.delete(scopedId);
+		cleanupSessionResources(scopedId);
+	}
+});
+
+function threadSession(sessionId: string, provider: string, apiKey: string): string {
+	const scopedId = `pi-account-manager:${createHash("sha256")
+		.update(JSON.stringify([sessionId, provider, apiKey])).digest("hex")}`;
+	threadSessions.delete(scopedId);
+	threadSessions.set(scopedId, sessionId);
+	if (threadSessions.size > 1000) {
+		const oldest = threadSessions.keys().next().value!;
+		threadSessions.delete(oldest);
+		cleanupSessionResources(oldest);
+	}
+	return scopedId;
+}
 
 export const bundledProvider = (provider: ProviderId): Provider | undefined =>
 	builtinProviders().find((candidate) => candidate.id === provider);
@@ -40,6 +69,11 @@ export function buildAlias(base: Provider | undefined, account: Account): Provid
 			compat.supportsMessageThreads ??= true;
 			model = { ...model, compat };
 		}
+		if (account.provider === "anthropic" && model.api === "anthropic-messages" &&
+			model.compat && "supportsMessageThreads" in model.compat && model.compat.supportsMessageThreads &&
+			options?.sessionId && options.apiKey) {
+			options = { ...options, sessionId: threadSession(options.sessionId, id, options.apiKey) };
+		}
 		return isChatGPTSubscription(model, options)
 			? {
 				model: withoutMidConvoEffort(model),
@@ -78,4 +112,3 @@ export function buildAlias(base: Provider | undefined, account: Account): Provid
 		},
 	};
 }
-

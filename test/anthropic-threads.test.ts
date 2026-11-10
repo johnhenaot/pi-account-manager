@@ -78,9 +78,9 @@ function expectFull(request: CapturedRequest, count: number, thread = true) {
 	else expect(request.body).not.toHaveProperty("thread");
 }
 
-function expectContinuation(request: CapturedRequest, previousMessageId: string) {
+function expectContinuation(request: CapturedRequest, previousMessageId: string, count = 1) {
 	expect(request.body.thread).toEqual({ type: "continue", previous_message_id: previousMessageId });
-	expect(request.body.messages).toHaveLength(1);
+	expect(request.body.messages).toHaveLength(count);
 	expect(request.body).not.toHaveProperty("system");
 	expect(request.body).not.toHaveProperty("tools");
 }
@@ -127,21 +127,58 @@ describe("Anthropic threads via real SDK", () => {
 		expectContinuation(requests[3], recovered.responseId!);
 	});
 
-	it("disables unsupported threads until session cleanup", async () => {
-		const { alias, model } = fixture();
+	it("keeps unsupported-thread fallback scoped to the account", async () => {
+		const { alias: work, model: workModel } = fixture();
+		const personal = buildAlias(bundledProvider("anthropic"), { provider: "anthropic", name: "personal" });
+		const personalModel = personal.getModels().find((model) => model.id === MODEL_ID)!;
 		const { requests, options } = transport([() => rejection("thread_unsupported_request")]);
 		const messages = [userMessage("hello")];
-		const first = await alias.streamSimple(model, context(messages), options).result();
+		const first = await work.streamSimple(workModel, context(messages), options).result();
 		expect(first.stopReason).toBe("stop");
-		expect(requests).toHaveLength(2);
-		expectFull(requests[0], 1);
 		expectFull(requests[1], 1, false);
-		messages.push(first, userMessage("follow up"));
-		await alias.streamSimple(model, context(messages), options).result();
-		expectFull(requests[2], 3, false);
+		const personalOptions = { ...options, apiKey: token("personal") };
+		const second = await personal.streamSimple(personalModel, context(messages), personalOptions).result();
+		expect(second.stopReason).toBe("stop");
+		expectFull(requests[2], 1);
+		await work.streamSimple(workModel, context(messages), options).result();
+		expectFull(requests[3], 1, false);
+		messages.push(second, userMessage("follow up"));
+		await personal.streamSimple(personalModel, context(messages), personalOptions).result();
+		expectContinuation(requests[4], second.responseId!);
 		cleanupSessionResources(SESSION_ID);
-		await alias.streamSimple(model, context(messages), options).result();
-		expectFull(requests[3], 3);
+		await work.streamSimple(workModel, context(messages), options).result();
+		await personal.streamSimple(personalModel, context(messages), personalOptions).result();
+		expectFull(requests[5], 3);
+		expectFull(requests[6], 3);
+	});
+
+	it("does not let an in-flight old login replace the new login's thread", async () => {
+		const { alias, model } = fixture();
+		let releaseOld!: () => void;
+		let signalStarted!: () => void;
+		const gate = new Promise<void>((resolve) => { releaseOld = resolve; });
+		const started = new Promise<void>((resolve) => { signalStarted = resolve; });
+		const { requests, options } = transport();
+		const fetch: typeof globalThis.fetch = async (input, init) => {
+			const request = new Request(input, init);
+			if (request.headers.get("authorization") === `Bearer ${token("old")}`) {
+				signalStarted();
+				await gate;
+				return reply("msg_old");
+			}
+			return options.fetch!(input, init);
+		};
+		const messages = [userMessage("hello")];
+		const oldRequest = alias.streamSimple(model, context(messages), { ...options, apiKey: token("old"), fetch }).result();
+		await started;
+		const nextOptions = { ...options, apiKey: token("new"), fetch };
+		const current = await alias.streamSimple(model, context(messages), nextOptions).result();
+		releaseOld();
+		expect((await oldRequest).stopReason).toBe("stop");
+		expect(current.stopReason).toBe("stop");
+		messages.push(current, userMessage("follow up"));
+		await alias.streamSimple(model, context(messages), nextOptions).result();
+		expectContinuation(requests[1], current.responseId!);
 	});
 
 	it("keeps cache warming from consuming or replacing the real conversation thread", async () => {
@@ -163,6 +200,37 @@ describe("Anthropic threads via real SDK", () => {
 });
 
 describe("Anthropic named credential isolation with the real runtime", () => {
+	it.each([false, true])("starts a full thread after replacing the login (gateway=%s)", async (gateway) => {
+		const agentDir = await makeAgentDir();
+		try {
+			const { credentials, runtime, registry } = await realRegistry(agentDir);
+			registry.registerProvider(buildAlias(registry.getProvider("anthropic"), { provider: "anthropic", name: "work" }));
+			const credential = (name: string) => ({ type: "oauth" as const, access: token(name), refresh: `fake-${name}-refresh`, expires: Date.now() + 3_600_000 });
+			const model = {
+				...registry.find("anthropic@work", MODEL_ID)!,
+				...(gateway ? { baseUrl: "https://gateway.example.test", compat: { supportsMessageThreads: true } } : {}),
+			};
+			const { requests, options } = transport();
+			const { apiKey: _apiKey, ...runtimeOptions } = options;
+			const messages = [userMessage("hello")];
+			await credentials.modify("anthropic@work", async () => credential("old"));
+			const first = await runtime.streamSimple(model, context(messages), runtimeOptions).result();
+			expect(first.stopReason).toBe("stop");
+			messages.push(first, userMessage("after login"));
+			await runtime.logout("anthropic@work");
+			await credentials.modify("anthropic@work", async () => credential("new"));
+			const second = await runtime.streamSimple(model, context(messages), runtimeOptions).result();
+			expect(second.stopReason).toBe("stop");
+			expect(requests[1].headers.get("authorization")).toBe(`Bearer ${token("new")}`);
+			expectFull(requests[1], 3);
+			messages.push(second, userMessage("continue new account"));
+			await runtime.streamSimple(model, context(messages), runtimeOptions).result();
+			expectContinuation(requests[2], second.responseId!);
+		} finally {
+			await cleanupAgentDir(agentDir);
+		}
+	});
+
 	it("isolates work → personal → work threads and credentials, including logout", async () => {
 		const agentDir = await makeAgentDir();
 		try {
@@ -192,7 +260,8 @@ describe("Anthropic named credential isolation with the real runtime", () => {
 				expect(result.stopReason).toBe("stop");
 				expect(result.provider).toBe(`anthropic@${name}`);
 				expect(requests[index].headers.get("authorization")).toBe(`Bearer ${token(name)}`);
-				expectFull(requests[index], 2 * index + 1);
+				if (index < 2) expectFull(requests[index], 2 * index + 1);
+				else expectContinuation(requests[index], `msg_${index - 1}`, 3);
 				messages.push(result, userMessage(`after ${name}`));
 			}
 			await runtime.logout("anthropic@work");

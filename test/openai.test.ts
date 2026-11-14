@@ -18,7 +18,12 @@ let agentDir: string;
 beforeEach(async () => {
 	agentDir = await makeAgentDir();
 	// Every allowed HTTP request in this file must use its explicitly injected stub.
-	vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("Unexpected live HTTP request in OpenAI test"); }));
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async () => {
+			throw new Error("Unexpected live HTTP request in OpenAI test");
+		}),
+	);
 });
 
 afterEach(async () => {
@@ -52,7 +57,11 @@ function captureRequests() {
 	const requests: { url: string; headers: Headers; body: Record<string, unknown> }[] = [];
 	const fetch: typeof globalThis.fetch = async (input, init) => {
 		const request = new Request(input, init);
-		requests.push({ url: request.url, headers: request.headers, body: await request.json() as Record<string, unknown> });
+		requests.push({
+			url: request.url,
+			headers: request.headers,
+			body: (await request.json()) as Record<string, unknown>,
+		});
 		const event = {
 			type: "response.completed",
 			response: { id: "resp_fake_for_tests", status: "completed", output: [] },
@@ -100,29 +109,32 @@ describe("OpenAI alias transport", () => {
 
 	for (const method of ["stream", "streamSimple"] as const) {
 		describe(method, () => {
-			it.each([false, true])("omits subscription-incompatible fields and keeps alias attribution (explicit cache: %s)", async (explicit) => {
-				const { alias, model } = fixture(explicit);
-				const { fetch, requests } = captureRequests();
-				const options = requestOptions(fetch);
-				const stream = alias[method](model, transcript(), options);
-				const providers: string[] = [];
-				for await (const event of stream) {
-					if ("partial" in event) providers.push(event.partial.provider);
-					if (event.type === "done") providers.push(event.message.provider);
-				}
-				const result = await stream.result();
-				expect(result.stopReason).toBe("stop");
-				expect(result.provider).toBe("openai@work");
-				expect(result.model).toBe(model.id);
-				expect(providers.length).toBeGreaterThan(0);
-				expect(new Set(providers)).toEqual(new Set(["openai@work"]));
-				expect(requests).toHaveLength(1);
-				expect(requests[0].url).toBe("https://api.openai.com/v1/responses");
-				expect(requests[0].headers.get("authorization")).toBe(`Bearer ${FAKE_TOKEN}`);
-				expectNoForbiddenFields(requests[0].body);
-				expect(options.onPayload).toBeUndefined();
-				expect(options.maxTokens).toBe(128);
-			});
+			it.each([false, true])(
+				"omits subscription-incompatible fields and keeps alias attribution (explicit cache: %s)",
+				async (explicit) => {
+					const { alias, model } = fixture(explicit);
+					const { fetch, requests } = captureRequests();
+					const options = requestOptions(fetch);
+					const stream = alias[method](model, transcript(), options);
+					const providers: string[] = [];
+					for await (const event of stream) {
+						if ("partial" in event) providers.push(event.partial.provider);
+						if (event.type === "done") providers.push(event.message.provider);
+					}
+					const result = await stream.result();
+					expect(result.stopReason).toBe("stop");
+					expect(result.provider).toBe("openai@work");
+					expect(result.model).toBe(model.id);
+					expect(providers.length).toBeGreaterThan(0);
+					expect(new Set(providers)).toEqual(new Set(["openai@work"]));
+					expect(requests).toHaveLength(1);
+					expect(requests[0].url).toBe("https://api.openai.com/v1/responses");
+					expect(requests[0].headers.get("authorization")).toBe(`Bearer ${FAKE_TOKEN}`);
+					expectNoForbiddenFields(requests[0].body);
+					expect(options.onPayload).toBeUndefined();
+					expect(options.maxTokens).toBe(128);
+				},
+			);
 
 			it("calls a mutating hook after omissions and preserves its undefined return", async () => {
 				const { alias, model } = fixture();
@@ -151,7 +163,11 @@ describe("OpenAI alias transport", () => {
 					expectNoForbiddenFields(payload);
 					expect(requestModel.provider).toBe(alias.id);
 					await Promise.resolve();
-					return { ...(payload as Record<string, unknown>), metadata: { source: "fake-hook-replacement" }, temperature: 0.8 };
+					return {
+						...(payload as Record<string, unknown>),
+						metadata: { source: "fake-hook-replacement" },
+						temperature: 0.8,
+					};
 				});
 				const result = await alias[method](model, transcript(), { ...requestOptions(fetch), onPayload }).result();
 				expect(result.stopReason).toBe("stop");
@@ -160,36 +176,51 @@ describe("OpenAI alias transport", () => {
 				expect(requests[0].body.temperature).toBe(0.8);
 			});
 
-			it.each(["subscription", "custom endpoint", "API key"] as const)("gates mid-conversation effort updates for %s", async (kind) => {
-				const { base, model } = fixture();
-				const delegate = vi.spyOn(base, method);
-				const alias = buildAlias(base, { provider: "openai", name: "work" });
-				const { fetch, requests } = captureRequests();
-				// Newer catalogs enable the flag; the alias must override it, not just fill it in.
-				const effortModel = { ...model, compat: { ...model.compat, supportsMidConvoEffort: true } };
-				const requestModel = kind === "custom endpoint" ? { ...effortModel, baseUrl: "https://fake-openai.example/v1" } : effortModel;
-				const snapshot = structuredClone(requestModel);
-				// stream() reads reasoningEffort; only streamSimple() maps reasoning onto it.
-				const effort = method === "stream" ? { reasoningEffort: "high" as const } : { reasoning: "high" as const };
-				const options = { ...requestOptions(fetch), apiKey: kind === "API key" ? "sk-fake-api-key-for-tests" : FAKE_TOKEN, ...effort };
-				await alias[method](requestModel, transcript(), options).result();
-				const [sentModel, , sentOptions] = delegate.mock.calls[0];
-				expect(requestModel).toEqual(snapshot);
-				expect(sentOptions).toMatchObject(effort);
-				if (kind !== "subscription") return expect(sentModel).toBe(requestModel);
-				expect(requests[0].body.reasoning).toMatchObject({ effort: "high" });
-				expect(requests[0].body.input).not.toContainEqual(expect.objectContaining({ type: "configuration_update" }));
-				expect(sentModel).not.toBe(requestModel);
-				expect(sentModel.compat).not.toBe(requestModel.compat);
-				expect(sentModel).toEqual({ ...requestModel, compat: { ...requestModel.compat, supportsMidConvoEffort: false } });
-			});
+			it.each(["subscription", "custom endpoint", "API key"] as const)(
+				"gates mid-conversation effort updates for %s",
+				async (kind) => {
+					const { base, model } = fixture();
+					const delegate = vi.spyOn(base, method);
+					const alias = buildAlias(base, { provider: "openai", name: "work" });
+					const { fetch, requests } = captureRequests();
+					// Newer catalogs enable the flag; the alias must override it, not just fill it in.
+					const effortModel = { ...model, compat: { ...model.compat, supportsMidConvoEffort: true } };
+					const requestModel =
+						kind === "custom endpoint" ? { ...effortModel, baseUrl: "https://fake-openai.example/v1" } : effortModel;
+					const snapshot = structuredClone(requestModel);
+					// stream() reads reasoningEffort; only streamSimple() maps reasoning onto it.
+					const effort = method === "stream" ? { reasoningEffort: "high" as const } : { reasoning: "high" as const };
+					const options = {
+						...requestOptions(fetch),
+						apiKey: kind === "API key" ? "sk-fake-api-key-for-tests" : FAKE_TOKEN,
+						...effort,
+					};
+					await alias[method](requestModel, transcript(), options).result();
+					const [sentModel, , sentOptions] = delegate.mock.calls[0];
+					expect(requestModel).toEqual(snapshot);
+					expect(sentOptions).toMatchObject(effort);
+					if (kind !== "subscription") return expect(sentModel).toBe(requestModel);
+					expect(requests[0].body.reasoning).toMatchObject({ effort: "high" });
+					expect(requests[0].body.input).not.toContainEqual(expect.objectContaining({ type: "configuration_update" }));
+					expect(sentModel).not.toBe(requestModel);
+					expect(sentModel.compat).not.toBe(requestModel.compat);
+					expect(sentModel).toEqual({
+						...requestModel,
+						compat: { ...requestModel.compat, supportsMidConvoEffort: false },
+					});
+				},
+			);
 
 			it.each(["custom endpoint", "API key"] as const)("leaves ordinary payload fields intact for %s", async (kind) => {
 				for (const explicit of [false, true]) {
 					const { alias, model } = fixture(explicit);
 					const { fetch, requests } = captureRequests();
-					const requestModel = kind === "custom endpoint" ? { ...model, baseUrl: "https://fake-openai.example/v1" } : model;
-					const options = { ...requestOptions(fetch), apiKey: kind === "API key" ? "sk-fake-api-key-for-tests" : FAKE_TOKEN };
+					const requestModel =
+						kind === "custom endpoint" ? { ...model, baseUrl: "https://fake-openai.example/v1" } : model;
+					const options = {
+						...requestOptions(fetch),
+						apiKey: kind === "API key" ? "sk-fake-api-key-for-tests" : FAKE_TOKEN,
+					};
 					const result = await alias[method](requestModel, transcript(), options).result();
 					expect(result.stopReason).toBe("stop");
 					expect(requests).toHaveLength(1);
@@ -240,7 +271,9 @@ describe("OpenAI named credential isolation", () => {
 			const result = await runtime.streamSimple(model, transcript(), { fetch, maxRetries: 0, maxTokens: 128 }).result();
 			expect(result.stopReason).toBe("stop");
 			expect(result.provider).toBe(`openai@${name}`);
-			expect(requests[index].headers.get("authorization")).toBe(`Bearer ${index === 0 ? work.access : personal.access}`);
+			expect(requests[index].headers.get("authorization")).toBe(
+				`Bearer ${index === 0 ? work.access : personal.access}`,
+			);
 			expectNoForbiddenFields(requests[index].body);
 		}
 		expect(credentials.entries.has("openai")).toBe(false);

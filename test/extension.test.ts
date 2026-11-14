@@ -3,12 +3,20 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Account } from "../src/account.ts";
-import { ANTHROPIC_EXTRA_USAGE_WARNING, EMPTY_LIST, isAuthenticated, MIN_PI, meetsMinimum, USAGE, WARNED } from "../src/index.ts";
+import {
+	ANTHROPIC_EXTRA_USAGE_WARNING,
+	EMPTY_LIST,
+	isAuthenticated,
+	MIN_PI,
+	meetsMinimum,
+	USAGE,
+	WARNED,
+} from "../src/index.ts";
 import { loadAccounts, statePath } from "../src/state.ts";
 import {
 	cleanupAgentDir,
-	harness,
 	type HarnessOptions,
+	harness,
 	makeAgentDir,
 	oauthCredential,
 	readStateFile,

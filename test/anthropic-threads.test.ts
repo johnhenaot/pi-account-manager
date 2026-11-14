@@ -8,15 +8,21 @@ const MODEL_ID = "claude-sonnet-5";
 const SESSION_ID = "fake-anthropic-thread-session";
 const token = (name: string) => `sk-ant-oat-fake-${name}-for-tests`;
 const userMessage = (content: string): Message => ({ role: "user", content, timestamp: 0 });
-const context = (messages: Message[]) => normalizeContext({
-	systemPrompt: "Test system prompt",
-	tools: [{ name: "lookup", description: "Test tool", parameters: { type: "object", properties: {} } }],
-	messages,
-});
+const context = (messages: Message[]) =>
+	normalizeContext({
+		systemPrompt: "Test system prompt",
+		tools: [{ name: "lookup", description: "Test tool", parameters: { type: "object", properties: {} } }],
+		messages,
+	});
 
 beforeEach(() => {
 	cleanupSessionResources();
-	vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("Unexpected live HTTP request in Anthropic test"); }));
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async () => {
+			throw new Error("Unexpected live HTTP request in Anthropic test");
+		}),
+	);
 });
 
 afterEach(() => {
@@ -40,7 +46,17 @@ interface CapturedRequest {
 
 function reply(id: string): Response {
 	const events = [
-		{ type: "message_start", message: { id, type: "message", role: "assistant", model: MODEL_ID, content: [], usage: { input_tokens: 20, output_tokens: 0 } } },
+		{
+			type: "message_start",
+			message: {
+				id,
+				type: "message",
+				role: "assistant",
+				model: MODEL_ID,
+				content: [],
+				usage: { input_tokens: 20, output_tokens: 0 },
+			},
+		},
 		{ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
 		{ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: `Reply ${id}` } },
 		{ type: "content_block_stop", index: 0 },
@@ -54,16 +70,28 @@ function reply(id: string): Response {
 }
 
 function rejection(code: string): Response {
-	return new Response(JSON.stringify({ type: "error", error: {
-		type: "invalid_request_error", message: "Thread rejected", details: { error_code: code },
-	} }), { status: 400, headers: { "content-type": "application/json" } });
+	return new Response(
+		JSON.stringify({
+			type: "error",
+			error: {
+				type: "invalid_request_error",
+				message: "Thread rejected",
+				details: { error_code: code },
+			},
+		}),
+		{ status: 400, headers: { "content-type": "application/json" } },
+	);
 }
 
 function transport(responses: (() => Response)[] = []) {
 	const requests: CapturedRequest[] = [];
 	const fetch: typeof globalThis.fetch = async (input, init) => {
 		const request = new Request(input, init);
-		requests.push({ url: request.url, headers: request.headers, body: await request.json() as CapturedRequest["body"] });
+		requests.push({
+			url: request.url,
+			headers: request.headers,
+			body: (await request.json()) as CapturedRequest["body"],
+		});
 		return responses.shift()?.() ?? reply(`msg_${requests.length}`);
 	};
 	const options: StreamOptions = { apiKey: token("work"), fetch, sessionId: SESSION_ID, maxRetries: 0, maxTokens: 128 };
@@ -143,7 +171,12 @@ describe("Anthropic named credential isolation with the real runtime", () => {
 			await credentials.modify("anthropic", async () => ({ type: "api_key", key: "sk-ant-fake-native-key-for-tests" }));
 			expect((await runtime.getAuth("anthropic"))?.auth.apiKey).toBe("sk-ant-fake-native-key-for-tests");
 			expect(await runtime.getAuth("anthropic@work")).toBeUndefined();
-			const credential = (name: string) => ({ type: "oauth" as const, access: token(name), refresh: `fake-${name}-refresh`, expires: Date.now() + 3_600_000 });
+			const credential = (name: string) => ({
+				type: "oauth" as const,
+				access: token(name),
+				refresh: `fake-${name}-refresh`,
+				expires: Date.now() + 3_600_000,
+			});
 			await credentials.modify("anthropic", async () => credential("native"));
 			expect((await runtime.getAuth("anthropic"))?.auth.apiKey).toBe(token("native"));
 			expect(await runtime.getAuth("anthropic@work")).toBeUndefined();
@@ -166,7 +199,9 @@ describe("Anthropic named credential isolation with the real runtime", () => {
 			await runtime.logout("anthropic@work");
 			expect(await runtime.getAuth("anthropic@work")).toBeUndefined();
 			expect((await runtime.getAuth("anthropic@personal"))?.auth.apiKey).toBe(token("personal"));
-			const result = await runtime.streamSimple(registry.find("anthropic@personal", MODEL_ID)!, context(messages), runtimeOptions).result();
+			const result = await runtime
+				.streamSimple(registry.find("anthropic@personal", MODEL_ID)!, context(messages), runtimeOptions)
+				.result();
 			expect(result.stopReason).toBe("stop");
 			expectContinuation(requests[4], "msg_4");
 			expect(requests[4].headers.get("authorization")).toBe(`Bearer ${token("personal")}`);

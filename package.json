@@ -22,9 +22,11 @@
 	],
 	"scripts": {
 		"prepublishOnly": "npm run check",
-		"test": "vitest --run",
+		"format": "biome check --write .",
+		"lint": "biome ci .",
 		"typecheck": "tsc --noEmit",
-		"check": "npm run typecheck && npm test"
+		"test": "vitest --run",
+		"check": "npm run lint && npm run typecheck && npm test"
 	},
 	"peerDependencies": {
 		"@earendil-works/pi-ai": "*",
@@ -39,6 +41,7 @@
 		}
 	},
 	"devDependencies": {
+		"@biomejs/biome": "^2.6.7",
 		"@earendil-works/pi-ai": "1.5.2",
 		"@earendil-works/pi-coding-agent": "1.5.2",
 		"typescript": "^5.9.3",

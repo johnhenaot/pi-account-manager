@@ -32,11 +32,11 @@ The first time you sign in, pick one of the account's models with `/model`.
 
 ## Supported providers
 
-| Choose | Alias | Signs in with |
-| --- | --- | --- |
-| Anthropic | `anthropic@<name>` | Your Claude subscription |
-| OpenAI | `openai@<name>` | Sign in with ChatGPT |
-| OpenAI Codex | `openai-codex@<name>` | The legacy Codex login |
+| Choose       | Alias                 | Signs in with            |
+| ------------ | --------------------- | ------------------------ |
+| Anthropic    | `anthropic@<name>`    | Your Claude subscription |
+| OpenAI       | `openai@<name>`       | Sign in with ChatGPT     |
+| OpenAI Codex | `openai-codex@<name>` | The legacy Codex login   |
 
 Each account signs in on its own. A named account never uses pi's built-in login for that provider, or an API key.
 
@@ -90,7 +90,8 @@ Names can use 1 to 32 characters: lowercase letters, digits, `_` and `-`, starti
 
 ```bash
 npm ci
-npm run check    # type check and tests
+npm run check    # lint, type check and tests
+npm run format   # fix formatting and imports
 ```
 
 ## License

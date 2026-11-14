@@ -1,4 +1,9 @@
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import type {
+	ExtensionAPI,
+	ExtensionCommandContext,
+	ExtensionContext,
+	ModelRegistry,
+} from "@earendil-works/pi-coding-agent";
 import { getAgentDir, SettingsManager, VERSION } from "@earendil-works/pi-coding-agent";
 import {
 	type Account,
@@ -70,7 +75,14 @@ export function formatList(accounts: readonly Account[], registry: ModelRegistry
 		]),
 	];
 	const widths = rows[0].map((_, column) => Math.max(...rows.map((row) => row[column].length)));
-	return rows.map((row) => row.map((cell, i) => cell.padEnd(widths[i])).join("  ").trimEnd()).join("\n");
+	return rows
+		.map((row) =>
+			row
+				.map((cell, i) => cell.padEnd(widths[i]))
+				.join("  ")
+				.trimEnd(),
+		)
+		.join("\n");
 }
 
 export default async function (pi: ExtensionAPI) {
@@ -203,7 +215,10 @@ export default async function (pi: ExtensionAPI) {
 		try {
 			if (blockers.length > 0) throw new Error(blockers.join("\n"));
 			const accounts = await loadAccounts(agentDir);
-			await saveAccounts(agentDir, accounts.filter((account) => accountId(account) !== id));
+			await saveAccounts(
+				agentDir,
+				accounts.filter((account) => accountId(account) !== id),
+			);
 			snapshot = snapshot.filter((account) => accountId(account) !== id);
 			pi.unregisterProvider(id);
 		} catch (error) {
@@ -225,7 +240,8 @@ export default async function (pi: ExtensionAPI) {
 				extra === undefined &&
 				(command === "add" || command === "remove" || (command === "list" && argument === undefined));
 			if (!valid) ctx.ui.notify(USAGE, "error");
-			else if (command === "list") ctx.ui.notify(loadError ?? formatList(snapshot, ctx.modelRegistry), loadError ? "error" : "info");
+			else if (command === "list")
+				ctx.ui.notify(loadError ?? formatList(snapshot, ctx.modelRegistry), loadError ? "error" : "info");
 			else if (loadError) ctx.ui.notify(`${loadError} Fix the account state, then run /reload.`, "error");
 			else if (command === "add") await add(ctx, argument);
 			else await remove(ctx, argument);

@@ -1,12 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-	type Account,
-	accountId,
-	isProviderId,
-	isValidName,
-	normalizeName,
-	sortAccounts,
-} from "../src/account.ts";
+import { type Account, accountId, isProviderId, isValidName, normalizeName, sortAccounts } from "../src/account.ts";
 
 describe("names", () => {
 	it("normalizes with trim then ASCII lowercasing only", () => {

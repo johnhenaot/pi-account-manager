@@ -107,31 +107,42 @@ export function stubProvider(id: string, options: { oauth?: boolean; models?: nu
 		return stream;
 	};
 
-	const apiKeyOnly = { apiKey: { name: "key", async resolve() {
-		return { auth: { apiKey: "k" } };
-	} } };
+	const apiKeyOnly = {
+		apiKey: {
+			name: "key",
+			async resolve() {
+				return { auth: { apiKey: "k" } };
+			},
+		},
+	};
 
 	return {
 		id,
 		name: id,
 		baseUrl: "https://stub.example.com",
-		auth: options.oauth === false ? apiKeyOnly : {
-			apiKey: { name: "key", async resolve() {
-				return undefined;
-			} },
-			oauth: {
-				name: "Stub OAuth",
-				async login() {
-					return oauthCredential() as never;
-				},
-				async refresh(credential) {
-					return credential;
-				},
-				async toAuth() {
-					return { apiKey: "oauth-token" };
-				},
-			},
-		},
+		auth:
+			options.oauth === false
+				? apiKeyOnly
+				: {
+						apiKey: {
+							name: "key",
+							async resolve() {
+								return undefined;
+							},
+						},
+						oauth: {
+							name: "Stub OAuth",
+							async login() {
+								return oauthCredential() as never;
+							},
+							async refresh(credential) {
+								return credential;
+							},
+							async toAuth() {
+								return { apiKey: "oauth-token" };
+							},
+						},
+					},
 		getModels: () => models,
 		stream: echo,
 		streamSimple: echo,

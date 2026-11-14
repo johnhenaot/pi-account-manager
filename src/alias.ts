@@ -76,6 +76,7 @@ export function buildAlias(base: Provider | undefined, account: Account): Provid
 
 	const streamRequest = <T extends StreamOptions | undefined>(model: Model<Api>, options: T) => {
 		if (account.provider === "anthropic" && model.api === "anthropic-messages") {
+			// Pi 49fe0a2 makes this the default for every provider; remove once MIN_PI includes it.
 			if ((model as Model<"anthropic-messages">).compat?.supportsMessageThreads === undefined &&
 				model.baseUrl.includes("api.anthropic.com")) {
 				model = { ...model, compat: { ...model.compat, supportsMessageThreads: true } };

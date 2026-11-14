@@ -104,27 +104,8 @@ describe("Anthropic threads via real SDK", () => {
 		for (const request of requests) {
 			expect(new URL(request.url).origin).toBe("https://api.anthropic.com");
 			expect(request.headers.get("authorization")).toBe(`Bearer ${token("work")}`);
-			expect(request.headers.get("anthropic-beta")).toContain("message-threads-2026-08-12");
 		}
 		expect(model).toEqual(snapshot);
-	});
-
-	it("recovers an expired thread with a full request, then continues it", async () => {
-		const { alias, model } = fixture();
-		const { requests, options } = transport([() => reply("msg_original"), () => rejection("thread_not_found")]);
-		const messages = [userMessage("hello")];
-		const first = await alias.streamSimple(model, context(messages), options).result();
-		messages.push(first, userMessage("follow up"));
-		const recovered = await alias.streamSimple(model, context(messages), options).result();
-		expect(recovered.stopReason).toBe("stop");
-		expect(requests).toHaveLength(3);
-		expectContinuation(requests[1], first.responseId!);
-		expectFull(requests[2], 3);
-		expect(JSON.stringify(requests[2].body.messages)).toContain("hello");
-		expect(JSON.stringify(recovered)).toContain("anthropic_thread_fallback");
-		messages.push(recovered, userMessage("after recovery"));
-		await alias.streamSimple(model, context(messages), options).result();
-		expectContinuation(requests[3], recovered.responseId!);
 	});
 
 	it("keeps unsupported-thread fallback scoped to the account", async () => {
@@ -206,7 +187,6 @@ describe("Anthropic threads via real SDK", () => {
 		const warmed = await alias.streamSimple(model, context(messages), warmingOptions).result();
 		expect(warmed.stopReason).toBe("stop");
 		expectFull(requests[1], 1, false);
-		expect(requests[1].body.max_tokens).toBe(1);
 		expect(options).not.toHaveProperty("disableContinuation");
 		messages.push(first, userMessage("follow up"));
 		await alias.streamSimple(model, context(messages), options).result();

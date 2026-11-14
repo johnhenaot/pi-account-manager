@@ -45,7 +45,7 @@
 		"@earendil-works/pi-ai": "1.5.2",
 		"@earendil-works/pi-coding-agent": "1.5.2",
 		"typescript": "^5.9.3",
-		"vitest": "^3.2.4"
+		"vitest": "^4.1.11"
 	},
 	"engines": {
 		"node": ">=22.19.0"

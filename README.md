@@ -6,7 +6,7 @@ Log in to Anthropic twice — `anthropic@work` and `anthropic@personal` — and 
 between them with `/model`. Each account keeps its own login and its own usage.
 
 Supported providers: Anthropic, OpenAI (ChatGPT subscription), and OpenAI Codex
-(legacy). Requires pi 1.5.1 or newer.
+(legacy). Requires pi 1.2.0 or newer.
 
 ## Anthropic message threads
 

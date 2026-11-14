@@ -1,5 +1,7 @@
 # macOS Finder metadata
 .DS_Store
+*.log
+.humanlayer/
 .pi-subagents/artifacts/
 .worktrees/
 node_modules/

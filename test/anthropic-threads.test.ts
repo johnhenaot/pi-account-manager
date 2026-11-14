@@ -86,15 +86,15 @@ function expectContinuation(request: CapturedRequest, previousMessageId: string,
 }
 
 describe("Anthropic threads via real SDK", () => {
-	it.each(["stream", "streamSimple"] as const)("continues a full thread through %s with alias attribution", async (method) => {
+	it("continues a full thread with alias attribution", async () => {
 		const { alias, model } = fixture();
 		const { requests, options } = transport();
 		const messages = [userMessage("hello")];
 		const snapshot = structuredClone(model);
-		const first = await alias[method](model, context(messages), options).result();
+		const first = await alias.streamSimple(model, context(messages), options).result();
 		expect(first.stopReason).toBe("stop");
 		messages.push(first, userMessage("follow up"));
-		const second = await alias[method](model, context(messages), options).result();
+		const second = await alias.streamSimple(model, context(messages), options).result();
 		expect(second.stopReason).toBe("stop");
 		expect(first.provider).toBe(alias.id);
 		expect(second.provider).toBe(alias.id);

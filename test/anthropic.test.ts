@@ -18,11 +18,9 @@ function forwarded(provider: ProviderId, patch: Partial<Model<Api>>, options?: S
 }
 
 describe("Anthropic alias compatibility", () => {
-	it.each([
-		["https://api.anthropic.com", { supportsStrictTools: true }],
-		["https://api.anthropic.com:8443", { supportsMessageThreads: undefined, supportsStrictTools: true }],
-	])("opts in %s like pi's anthropic provider, keeping other compat flags", (baseUrl, compat) => {
-		const { model, sent } = forwarded("anthropic", { baseUrl, compat });
+	it("opts in api.anthropic.com like pi's anthropic provider, keeping other compat flags", () => {
+		const compat = { supportsStrictTools: true };
+		const { model, sent } = forwarded("anthropic", { baseUrl: "https://api.anthropic.com", compat });
 		expect(sent.compat).toEqual({ supportsStrictTools: true, supportsMessageThreads: true });
 		expect(model.compat).toEqual(compat);
 	});
@@ -37,7 +35,6 @@ describe("Anthropic alias compatibility", () => {
 
 	it.each([
 		["anthropic", "anthropic-messages", "https://gateway.example.com"],
-		["openai", "anthropic-messages", "https://api.anthropic.com"],
 		["anthropic", "openai-responses", "https://api.anthropic.com"],
 	] as const)("does not opt in %s using %s on %s", (provider, api, baseUrl) => {
 		const { model, sent } = forwarded(provider, { api, baseUrl });

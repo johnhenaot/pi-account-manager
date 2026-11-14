@@ -10,18 +10,9 @@ Supported providers: Anthropic, OpenAI (ChatGPT subscription), and OpenAI Codex
 
 ## Anthropic message threads
 
-Named Anthropic accounts use Pi's message threads wherever Pi's built-in
-Anthropic provider does: a `baseUrl` on `api.anthropic.com`. Explicit
-`compat.supportsMessageThreads` overrides are preserved; other gateways need one.
-
-Alias identity is preserved. Thread sessions are scoped to the named account and
-its credential, so replacing a login or disabling threads for one account does
-not affect another. A login change or token refresh starts a new thread, and
-also resets Pi's per-session strict-tool fallback and any `x-session-affinity`
-header sent with `compat.sendSessionAffinityHeaders`. Pi owns continuation and
-recovery; session cleanup also clears the scoped resources. Cache warming does
-not replace the conversation thread. Threads require a session ID and enabled
-prompt caching.
+Named Anthropic accounts get Pi's message threads on `api.anthropic.com`, like the
+built-in provider; other gateways need `compat.supportsMessageThreads`. Threads are
+kept per account and need pi 1.5.1 or newer.
 
 ## Install
 

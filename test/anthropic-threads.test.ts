@@ -152,6 +152,22 @@ describe("Anthropic threads via real SDK", () => {
 		expectFull(requests[6], 3);
 	});
 
+	it.each([
+		"https://api.anthropic.com",
+		"https://api.anthropic.com:8443",
+		"http://api.anthropic.com",
+	])("starts a full thread after replacing the login on %s", async (baseUrl) => {
+		const { alias, model: bundled } = fixture();
+		const model = { ...bundled, baseUrl };
+		const { requests, options } = transport();
+		const messages = [userMessage("hello")];
+		const first = await alias.streamSimple(model, context(messages), options).result();
+		messages.push(first, userMessage("after login"));
+		const second = await alias.streamSimple(model, context(messages), { ...options, apiKey: token("replaced") }).result();
+		expect(second.stopReason).toBe("stop");
+		expectFull(requests[1], 3);
+	});
+
 	it("does not let an in-flight old login replace the new login's thread", async () => {
 		const { alias, model } = fixture();
 		let releaseOld!: () => void;

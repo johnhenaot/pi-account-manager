@@ -63,16 +63,14 @@ export function buildAlias(base: Provider | undefined, account: Account): Provid
 		};
 
 	const streamRequest = <T extends StreamOptions | undefined>(model: Model<Api>, options: T) => {
-		if (account.provider === "anthropic" && model.api === "anthropic-messages" &&
-			URL.canParse(model.baseUrl) && new URL(model.baseUrl).origin === "https://api.anthropic.com") {
-			const compat = { supportsMessageThreads: true, ...model.compat };
-			compat.supportsMessageThreads ??= true;
-			model = { ...model, compat };
-		}
-		if (account.provider === "anthropic" && model.api === "anthropic-messages" &&
-			model.compat && "supportsMessageThreads" in model.compat && model.compat.supportsMessageThreads &&
-			options?.sessionId && options.apiKey) {
-			options = { ...options, sessionId: threadSession(options.sessionId, id, options.apiKey) };
+		if (account.provider === "anthropic" && model.api === "anthropic-messages") {
+			if ((model as Model<"anthropic-messages">).compat?.supportsMessageThreads === undefined &&
+				model.baseUrl.includes("api.anthropic.com")) {
+				model = { ...model, compat: { ...model.compat, supportsMessageThreads: true } };
+			}
+			if (options?.sessionId && options.apiKey) {
+				options = { ...options, sessionId: threadSession(options.sessionId, id, options.apiKey) };
+			}
 		}
 		return isChatGPTSubscription(model, options)
 			? {

@@ -5,8 +5,9 @@ import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { type Account, accountId, type ProviderId, PROVIDERS } from "./account.ts";
 
 const threadSessions = new Map<string, string>();
+let unregisterThreadCleanup: (() => void) | undefined;
 
-registerSessionResourceCleanup((sessionId) => {
+const cleanupThreadSessions = (sessionId?: string) => {
 	if (!sessionId) {
 		threadSessions.clear();
 		return;
@@ -16,9 +17,16 @@ registerSessionResourceCleanup((sessionId) => {
 		threadSessions.delete(scopedId);
 		cleanupSessionResources(scopedId);
 	}
-});
+};
+
+export function disposeThreadSessions(): void {
+	unregisterThreadCleanup?.();
+	unregisterThreadCleanup = undefined;
+	threadSessions.clear();
+}
 
 function threadSession(sessionId: string, provider: string, apiKey: string): string {
+	unregisterThreadCleanup ??= registerSessionResourceCleanup(cleanupThreadSessions);
 	const scopedId = `pi-account-manager:${createHash("sha256")
 		.update(JSON.stringify([sessionId, provider, apiKey])).digest("hex")}`;
 	threadSessions.delete(scopedId);

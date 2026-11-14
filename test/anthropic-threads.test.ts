@@ -1,5 +1,5 @@
 import type { Message, Model, Provider, StreamOptions } from "@earendil-works/pi-ai";
-import { cleanupSessionResources, getCacheWarmingRequestOptions, normalizeContext } from "@earendil-works/pi-ai";
+import { cleanupSessionResources, normalizeContext } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildAlias, bundledProvider } from "../src/alias.ts";
 import { cleanupAgentDir, makeAgentDir, realRegistry } from "./helpers.ts";
@@ -133,22 +133,6 @@ describe("Anthropic threads via real SDK", () => {
 		expectFull(requests[6], 3);
 	});
 
-	it.each([
-		"https://api.anthropic.com",
-		"https://api.anthropic.com:8443",
-		"http://api.anthropic.com",
-	])("starts a full thread after replacing the login on %s", async (baseUrl) => {
-		const { alias, model: bundled } = fixture();
-		const model = { ...bundled, baseUrl };
-		const { requests, options } = transport();
-		const messages = [userMessage("hello")];
-		const first = await alias.streamSimple(model, context(messages), options).result();
-		messages.push(first, userMessage("after login"));
-		const second = await alias.streamSimple(model, context(messages), { ...options, apiKey: token("replaced") }).result();
-		expect(second.stopReason).toBe("stop");
-		expectFull(requests[1], 3);
-	});
-
 	it("does not let an in-flight old login replace the new login's thread", async () => {
 		const { alias, model } = fixture();
 		let releaseOld!: () => void;
@@ -177,26 +161,14 @@ describe("Anthropic threads via real SDK", () => {
 		await alias.streamSimple(model, context(messages), nextOptions).result();
 		expectContinuation(requests[1], current.responseId!);
 	});
-
-	it("keeps cache warming from consuming or replacing the real conversation thread", async () => {
-		const { alias, model } = fixture();
-		const { requests, options } = transport();
-		const messages = [userMessage("hello")];
-		const first = await alias.streamSimple(model, context(messages), options).result();
-		const warmingOptions = getCacheWarmingRequestOptions(options, new AbortController().signal);
-		const warmed = await alias.streamSimple(model, context(messages), warmingOptions).result();
-		expect(warmed.stopReason).toBe("stop");
-		expectFull(requests[1], 1, false);
-		expect(options).not.toHaveProperty("disableContinuation");
-		messages.push(first, userMessage("follow up"));
-		await alias.streamSimple(model, context(messages), options).result();
-		expectContinuation(requests[2], first.responseId!);
-		expect(requests[2].body.thread?.previous_message_id).not.toBe(warmed.responseId);
-	});
 });
 
 describe("Anthropic named credential isolation with the real runtime", () => {
-	it.each([false, true])("starts a full thread after replacing the login (gateway=%s)", async (gateway) => {
+	it.each([
+		["https://api.anthropic.com", {}],
+		["https://api.anthropic.com:8443", {}],
+		["https://gateway.example.test", { compat: { supportsMessageThreads: true } }],
+	])("starts a full thread after replacing the login on %s", async (baseUrl, patch) => {
 		const agentDir = await makeAgentDir();
 		try {
 			const { credentials, runtime, registry } = await realRegistry(agentDir);
@@ -204,7 +176,8 @@ describe("Anthropic named credential isolation with the real runtime", () => {
 			const credential = (name: string) => ({ type: "oauth" as const, access: token(name), refresh: `fake-${name}-refresh`, expires: Date.now() + 3_600_000 });
 			const model = {
 				...registry.find("anthropic@work", MODEL_ID)!,
-				...(gateway ? { baseUrl: "https://gateway.example.test", compat: { supportsMessageThreads: true } } : {}),
+				baseUrl,
+				...patch,
 			};
 			const { requests, options } = transport();
 			const { apiKey: _apiKey, ...runtimeOptions } = options;

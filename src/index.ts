@@ -11,7 +11,7 @@ import {
 	PROVIDERS,
 	sortAccounts,
 } from "./account.ts";
-import { buildAlias, bundledProvider, disposeThreadSessions } from "./alias.ts";
+import { buildAlias, bundledProvider } from "./alias.ts";
 import { loadAccounts, saveAccounts } from "./state.ts";
 
 export const ANTHROPIC_EXTRA_USAGE_WARNING =
@@ -133,7 +133,6 @@ export default async function (pi: ExtensionAPI) {
 	pi.on("session_shutdown", (event, ctx) => {
 		if (event.reason !== "reload") return;
 		for (const account of snapshot) ctx.modelRegistry.unregisterProvider(accountId(account));
-		disposeThreadSessions();
 	});
 
 	pi.on("model_select", (event, ctx) => maybeWarnAnthropic(ctx, event.model?.provider));

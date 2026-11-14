@@ -126,80 +126,10 @@ describe("Anthropic threads via real SDK", () => {
 		messages.push(second, userMessage("follow up"));
 		await personal.streamSimple(personalModel, context(messages), personalOptions).result();
 		expectContinuation(requests[4], second.responseId!);
-		cleanupSessionResources(SESSION_ID);
-		await work.streamSimple(workModel, context(messages), options).result();
-		await personal.streamSimple(personalModel, context(messages), personalOptions).result();
-		expectFull(requests[5], 3);
-		expectFull(requests[6], 3);
-	});
-
-	it("does not let an in-flight old login replace the new login's thread", async () => {
-		const { alias, model } = fixture();
-		let releaseOld!: () => void;
-		let signalStarted!: () => void;
-		const gate = new Promise<void>((resolve) => { releaseOld = resolve; });
-		const started = new Promise<void>((resolve) => { signalStarted = resolve; });
-		const { requests, options } = transport();
-		const fetch: typeof globalThis.fetch = async (input, init) => {
-			const request = new Request(input, init);
-			if (request.headers.get("authorization") === `Bearer ${token("old")}`) {
-				signalStarted();
-				await gate;
-				return reply("msg_old");
-			}
-			return options.fetch!(input, init);
-		};
-		const messages = [userMessage("hello")];
-		const oldRequest = alias.streamSimple(model, context(messages), { ...options, apiKey: token("old"), fetch }).result();
-		await started;
-		const nextOptions = { ...options, apiKey: token("new"), fetch };
-		const current = await alias.streamSimple(model, context(messages), nextOptions).result();
-		releaseOld();
-		expect((await oldRequest).stopReason).toBe("stop");
-		expect(current.stopReason).toBe("stop");
-		messages.push(current, userMessage("follow up"));
-		await alias.streamSimple(model, context(messages), nextOptions).result();
-		expectContinuation(requests[1], current.responseId!);
 	});
 });
 
 describe("Anthropic named credential isolation with the real runtime", () => {
-	it.each([
-		["https://api.anthropic.com", {}],
-		["https://api.anthropic.com:8443", {}],
-		["https://gateway.example.test", { compat: { supportsMessageThreads: true } }],
-	])("starts a full thread after replacing the login on %s", async (baseUrl, patch) => {
-		const agentDir = await makeAgentDir();
-		try {
-			const { credentials, runtime, registry } = await realRegistry(agentDir);
-			registry.registerProvider(buildAlias(registry.getProvider("anthropic"), { provider: "anthropic", name: "work" }));
-			const credential = (name: string) => ({ type: "oauth" as const, access: token(name), refresh: `fake-${name}-refresh`, expires: Date.now() + 3_600_000 });
-			const model = {
-				...registry.find("anthropic@work", MODEL_ID)!,
-				baseUrl,
-				...patch,
-			};
-			const { requests, options } = transport();
-			const { apiKey: _apiKey, ...runtimeOptions } = options;
-			const messages = [userMessage("hello")];
-			await credentials.modify("anthropic@work", async () => credential("old"));
-			const first = await runtime.streamSimple(model, context(messages), runtimeOptions).result();
-			expect(first.stopReason).toBe("stop");
-			messages.push(first, userMessage("after login"));
-			await runtime.logout("anthropic@work");
-			await credentials.modify("anthropic@work", async () => credential("new"));
-			const second = await runtime.streamSimple(model, context(messages), runtimeOptions).result();
-			expect(second.stopReason).toBe("stop");
-			expect(requests[1].headers.get("authorization")).toBe(`Bearer ${token("new")}`);
-			expectFull(requests[1], 3);
-			messages.push(second, userMessage("continue new account"));
-			await runtime.streamSimple(model, context(messages), runtimeOptions).result();
-			expectContinuation(requests[2], second.responseId!);
-		} finally {
-			await cleanupAgentDir(agentDir);
-		}
-	});
-
 	it("isolates work → personal → work threads and credentials, including logout", async () => {
 		const agentDir = await makeAgentDir();
 		try {

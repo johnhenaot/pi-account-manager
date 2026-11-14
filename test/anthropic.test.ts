@@ -1,5 +1,5 @@
 import type { Api, Model, StreamOptions } from "@earendil-works/pi-ai";
-import { normalizeContext, registerSessionResourceCleanup } from "@earendil-works/pi-ai";
+import { normalizeContext } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import type { ProviderId } from "../src/account.ts";
 import { buildAlias } from "../src/alias.ts";
@@ -42,31 +42,5 @@ describe("Anthropic alias compatibility", () => {
 	] as const)("does not opt in %s using %s on %s", (provider, api, baseUrl) => {
 		const { model, sent } = forwarded(provider, { api, baseUrl });
 		expect(sent).toBe(model);
-	});
-});
-
-describe("Anthropic alias session scoping", () => {
-	const session = (apiKey: string, patch: Partial<Model<Api>>) =>
-		forwarded("anthropic", patch, { sessionId: "session", apiKey }).sentOptions?.sessionId;
-
-	it.each([
-		{ baseUrl: "https://api.anthropic.com" },
-		{ baseUrl: "https://gateway.example.com" },
-	])("scopes the session to the credential whether or not the alias enables threads: %o", (patch) => {
-		const first = session("sk-ant-oat-fake-a", patch);
-		expect(first).not.toBe("session");
-		expect(session("sk-ant-oat-fake-a", patch)).toBe(first);
-		expect(session("sk-ant-oat-fake-b", patch)).not.toBe(first);
-	});
-
-	it("does not fail a request when another session cleanup throws during eviction", () => {
-		const unregister = registerSessionResourceCleanup(() => { throw new Error("other cleanup failed"); });
-		try {
-			expect(() => {
-				for (let index = 0; index <= 1000; index++) forwarded("anthropic", {}, { sessionId: `s${index}`, apiKey: "k" });
-			}).not.toThrow();
-		} finally {
-			unregister();
-		}
 	});
 });

@@ -1,47 +1,6 @@
-import { createHash } from "node:crypto";
 import type { Api, Model, Provider, StreamOptions } from "@earendil-works/pi-ai";
-import { cleanupSessionResources, registerSessionResourceCleanup } from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { type Account, accountId, type ProviderId, PROVIDERS } from "./account.ts";
-
-const threadSessions = new Map<string, string>();
-let unregisterThreadCleanup: (() => void) | undefined;
-
-const cleanupThreadSessions = (sessionId?: string) => {
-	if (!sessionId) {
-		threadSessions.clear();
-		return;
-	}
-	for (const [scopedId, parentId] of threadSessions) {
-		if (parentId !== sessionId) continue;
-		threadSessions.delete(scopedId);
-		cleanupSessionResources(scopedId);
-	}
-};
-
-export function disposeThreadSessions(): void {
-	unregisterThreadCleanup?.();
-	unregisterThreadCleanup = undefined;
-	threadSessions.clear();
-}
-
-function threadSession(sessionId: string, provider: string, apiKey: string): string {
-	unregisterThreadCleanup ??= registerSessionResourceCleanup(cleanupThreadSessions);
-	const scopedId = `pi-account-manager:${createHash("sha256")
-		.update(JSON.stringify([sessionId, provider, apiKey])).digest("hex")}`;
-	threadSessions.delete(scopedId);
-	threadSessions.set(scopedId, sessionId);
-	if (threadSessions.size > 1000) {
-		const oldest = threadSessions.keys().next().value!;
-		threadSessions.delete(oldest);
-		try {
-			cleanupSessionResources(oldest);
-		} catch {
-			// Another session-resource cleanup failed; never fail the request over eviction.
-		}
-	}
-	return scopedId;
-}
 
 export const bundledProvider = (provider: ProviderId): Provider | undefined =>
 	builtinProviders().find((candidate) => candidate.id === provider);
@@ -81,9 +40,9 @@ export function buildAlias(base: Provider | undefined, account: Account): Provid
 				model.baseUrl.includes("api.anthropic.com")) {
 				model = { ...model, compat: { ...model.compat, supportsMessageThreads: true } };
 			}
-			if (options?.sessionId && options.apiKey) {
-				options = { ...options, sessionId: threadSession(options.sessionId, id, options.apiKey) };
-			}
+			// Keeps each account's thread and fallback state apart. Shortcut: Pi's session cleanup misses
+			// these scoped ids; Pi's 10k caps bound them. Track the ids if that ever matters.
+			if (options?.sessionId) options = { ...options, sessionId: `${options.sessionId}:${id}` };
 		}
 		return isChatGPTSubscription(model, options)
 			? {

@@ -1,103 +1,98 @@
 # pi-account-manager
 
-Pi extension for managing multiple named OAuth accounts per provider.
+Use more than one Anthropic or OpenAI subscription in pi, and switch between them with `/model`.
 
-Log in to Anthropic twice — `anthropic@work` and `anthropic@personal` — and switch
-between them with `/model`. Each account keeps its own login and its own usage.
-
-Supported providers: Anthropic, OpenAI (ChatGPT subscription), and OpenAI Codex
-(legacy). Requires pi 1.2.0 or newer.
-
-## Anthropic message threads
-
-Named Anthropic accounts get Pi's message threads on `api.anthropic.com`, like the
-built-in provider; other gateways need `compat.supportsMessageThreads`. Threads are
-kept per account and need pi 1.5.1 or newer.
+Sign in as `anthropic@work` and `anthropic@personal`, and each account keeps its own login and its own usage.
 
 ## Install
 
 ```bash
-pi install git:github.com/johnhenaot/pi-account-manager
+pi install npm:pi-account-manager
 ```
 
-SSH and a pinned tag work too:
+Restart pi, or run `/reload`. You need pi 1.2.0 or newer, and pi warns you at startup if yours is older.
 
-```bash
-pi install git:git@github.com:johnhenaot/pi-account-manager
-pi install git:github.com/johnhenaot/pi-account-manager@v0.1.0
-```
-
-## Adding an account
+## Add an account
 
 ```text
 /account add work
 ```
 
-Pick a provider when prompted. Pi prepares `/login anthropic@work` in your editor —
-press enter to run it and sign in as usual.
+Pick a provider. Pi puts `/login anthropic@work` in your editor, so press enter and sign in as usual.
 
-That's it. `anthropic@work` is now an ordinary provider, so:
+That's it. `anthropic@work` now works like any other provider:
 
 ```text
-/model                     switch between your accounts and their models
-/login anthropic@work      sign in again later
+/model                     switch between accounts and their models
+/login anthropic@work      sign in again
 /logout                    sign out of an account
 ```
 
-For a ChatGPT subscription, choose **OpenAI** when adding an account. Pi prepares
-`/login openai@work`, which uses Pi's standard **Sign in with ChatGPT** flow.
+The first time you sign in, pick one of the account's models with `/model`.
 
-**OpenAI Codex** keeps the legacy flow at `openai-codex@work`. Existing accounts
-remain unchanged. An `openai@work` account needs its own login; it does not reuse
-the native `openai` login, an API key, or an `openai-codex@work` credential.
+## Supported providers
 
-Named accounts follow the native provider's `models.json` settings, including any
-`headers` you set on it. Those headers are sent with every named account of that
-provider, and an `Authorization` header there replaces the account's own login.
+| Choose | Alias | Signs in with |
+| --- | --- | --- |
+| Anthropic | `anthropic@<name>` | Your Claude subscription |
+| OpenAI | `openai@<name>` | Sign in with ChatGPT |
+| OpenAI Codex | `openai-codex@<name>` | The legacy Codex login |
 
-After signing in for the first time, pick a model with `/model`. To start on a named
-account's model by default, name it in `/settings`:
-
-```json
-{ "defaultProvider": "anthropic@work", "defaultModel": "claude-sonnet-5" }
-```
+Each account signs in on its own. A named account never uses pi's built-in login for that provider, or an API key.
 
 ## Commands
 
 ```text
 /account                        list your accounts
-/account list                   list your accounts
 /account add [name]             add an account
-/account remove [name|alias-id] remove an account
+/account remove [name|alias]    remove an account
 ```
 
-`/account` shows each account's name, provider, and whether it's signed in:
+`/account` shows each account and whether it's signed in:
 
 ```text
 NAME      PROVIDER      ALIAS ID            STATUS
 personal  Anthropic     anthropic@personal  not authenticated
 work      Anthropic     anthropic@work      authenticated
 work      OpenAI        openai@work         authenticated
-work      OpenAI Codex  openai-codex@work   authenticated
 ```
 
-Removing an account only forgets the name — it never deletes your login. Sign out with
-`/logout` first, and switch off its models with `/model`; `/account remove` will tell you
-if either is still needed.
+`/account` only works in pi's interactive mode.
+
+## Start on an account by default
+
+Name the account and model in `/settings`:
+
+```json
+{ "defaultProvider": "anthropic@work", "defaultModel": "claude-sonnet-5" }
+```
+
+## Remove an account
+
+```text
+/account remove work
+```
+
+This only forgets the name and never deletes your login. Before removing an account, sign out with `/logout` and switch to another model. `/account remove` tells you if either step is still needed.
 
 ## Account names
 
-Names are trimmed and lowercased, and must be 1–32 characters of `a-z`, `0-9`, `_` or
-`-`, starting with a letter or digit. The same name can be used once per provider, so
-`anthropic@work`, `openai@work`, and `openai-codex@work` can all exist.
+Names can use 1 to 32 characters: lowercase letters, digits, `_` and `-`, starting with a letter or digit. Uppercase letters are lowercased. You can reuse a name across providers, so `anthropic@work` and `openai@work` can both exist.
 
-## Anthropic subscription usage
+## Good to know
 
-Once per pi run — the first time you select or resume onto an `anthropic@<name>` model —
-pi warns that usage through a third-party harness is billed per token against extra usage
-rather than your Claude plan limits. It is not repeated for later sessions in the same run.
-To silence it entirely, set this in `/settings`:
+- **Anthropic billing:** the first time in a pi run that you use an `anthropic@<name>` account, pi warns that third-party usage is billed per token as extra usage, not against your Claude plan limits. To turn the warning off, set `{ "warnings": { "anthropicExtraUsage": false } }` in `/settings`.
+- **Message threads:** Anthropic accounts use pi's message threads, kept separately for each account. That needs pi 1.5.1 or newer.
+- **`models.json`:** named accounts follow the built-in provider's settings there, including any `headers`. An `Authorization` header there replaces the account's own login.
+- **Where accounts live:** account names are kept in `~/.pi/agent/pi-account-manager/accounts.json`. Logins stay in pi's own `auth.json`, like any other provider.
 
-```json
-{ "warnings": { "anthropicExtraUsage": false } }
+## Development
+
+```bash
+npm ci
+npm run check    # type check and tests
 ```
+
+## License
+
+MIT

@@ -26,7 +26,11 @@ function threadSession(sessionId: string, provider: string, apiKey: string): str
 	if (threadSessions.size > 1000) {
 		const oldest = threadSessions.keys().next().value!;
 		threadSessions.delete(oldest);
-		cleanupSessionResources(oldest);
+		try {
+			cleanupSessionResources(oldest);
+		} catch {
+			// Another session-resource cleanup failed; never fail the request over eviction.
+		}
 	}
 	return scopedId;
 }

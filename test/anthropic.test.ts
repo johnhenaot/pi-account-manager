@@ -1,5 +1,5 @@
 import type { Api, Model, StreamOptions } from "@earendil-works/pi-ai";
-import { normalizeContext } from "@earendil-works/pi-ai";
+import { normalizeContext, registerSessionResourceCleanup } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import type { ProviderId } from "../src/account.ts";
 import { buildAlias } from "../src/alias.ts";
@@ -57,5 +57,16 @@ describe("Anthropic alias session scoping", () => {
 		expect(first).not.toBe("session");
 		expect(session("sk-ant-oat-fake-a", patch)).toBe(first);
 		expect(session("sk-ant-oat-fake-b", patch)).not.toBe(first);
+	});
+
+	it("does not fail a request when another session cleanup throws during eviction", () => {
+		const unregister = registerSessionResourceCleanup(() => { throw new Error("other cleanup failed"); });
+		try {
+			expect(() => {
+				for (let index = 0; index <= 1000; index++) forwarded("anthropic", {}, { sessionId: `s${index}`, apiKey: "k" });
+			}).not.toThrow();
+		} finally {
+			unregister();
+		}
 	});
 });

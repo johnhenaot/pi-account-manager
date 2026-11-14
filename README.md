@@ -17,12 +17,15 @@ kept per account and need pi 1.5.1 or newer.
 ## Install
 
 ```bash
-pi install git:github.com/johnhenaot/pi-account-manager
+pi install npm:pi-account-manager
 ```
 
-SSH and a pinned tag work too:
+Restart pi, or run `/reload`.
+
+Installing from git works too, over HTTPS, SSH, or at a pinned tag:
 
 ```bash
+pi install git:github.com/johnhenaot/pi-account-manager
 pi install git:git@github.com:johnhenaot/pi-account-manager
 pi install git:github.com/johnhenaot/pi-account-manager@v0.1.0
 ```

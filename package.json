@@ -3,6 +3,14 @@
 	"version": "0.1.0",
 	"description": "Pi extension for managing multiple named OAuth accounts per provider",
 	"license": "MIT",
+	"author": "John Henao <johnhenaot@gmail.com>",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/johnhenaot/pi-account-manager.git"
+	},
+	"keywords": [
+		"pi-package"
+	],
 	"type": "module",
 	"pi": {
 		"extensions": [
@@ -13,17 +21,30 @@
 		"src"
 	],
 	"scripts": {
+		"prepublishOnly": "npm run check",
 		"test": "vitest --run",
-		"typecheck": "tsc --noEmit"
+		"typecheck": "tsc --noEmit",
+		"check": "npm run typecheck && npm test"
 	},
 	"peerDependencies": {
-		"@earendil-works/pi-ai": ">=1.2.0",
-		"@earendil-works/pi-coding-agent": ">=1.2.0"
+		"@earendil-works/pi-ai": "*",
+		"@earendil-works/pi-coding-agent": "*"
+	},
+	"peerDependenciesMeta": {
+		"@earendil-works/pi-ai": {
+			"optional": true
+		},
+		"@earendil-works/pi-coding-agent": {
+			"optional": true
+		}
 	},
 	"devDependencies": {
 		"@earendil-works/pi-ai": "1.5.2",
 		"@earendil-works/pi-coding-agent": "1.5.2",
 		"typescript": "^5.9.3",
 		"vitest": "^3.2.4"
+	},
+	"engines": {
+		"node": ">=22.19.0"
 	}
 }

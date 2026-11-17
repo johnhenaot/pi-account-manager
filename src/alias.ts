@@ -1,9 +1,79 @@
-import type { Api, Model, Provider, StreamOptions } from "@earendil-works/pi-ai";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import {
+	type Api,
+	InMemoryCredentialStore,
+	InMemoryModelsStore,
+	type Model,
+	type ModelsStoreEntry,
+	type Provider,
+	type StreamOptions,
+} from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { type Account, accountId, PROVIDERS, type ProviderId } from "./account.ts";
 
 export const bundledProvider = (provider: ProviderId): Provider | undefined =>
 	builtinProviders().find((candidate) => candidate.id === provider);
+
+/** Pi's cache of pi.dev catalog updates, keyed by provider ID. Unreadable means no updates. */
+async function readCatalogCache(agentDir: string): Promise<Record<string, ModelsStoreEntry | undefined>> {
+	try {
+		const parsed: unknown = JSON.parse(await readFile(join(agentDir, "models-store.json"), "utf8"));
+		return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, ModelsStoreEntry>) : {};
+	} catch {
+		return {};
+	}
+}
+
+/**
+ * The native providers as pi composes them at startup: bundled models plus models.json and the
+ * cached pi.dev catalog. Pi resolves --model, --thinking and --list-models before session_start,
+ * so the load-time aliases need these, and no extension hook runs early enough to read pi's own
+ * registry. A private runtime with no credentials, no network and no store writes rebuilds them
+ * from the same files. A provider missing from the result falls back to the bundled one.
+ */
+export async function startupProviders(
+	agentDir: string,
+	ids: readonly ProviderId[],
+): Promise<Map<ProviderId, Provider>> {
+	const providers = new Map<ProviderId, Provider>();
+	if (ids.length === 0) return providers;
+	let runtime: ModelRuntime;
+	try {
+		runtime = await ModelRuntime.create({
+			credentials: new InMemoryCredentialStore(),
+			modelsPath: join(agentDir, "models.json"),
+			modelsStore: new InMemoryModelsStore(),
+			// A full refresh would also check auth, which can run models.json key commands.
+			refreshOnCreate: false,
+		});
+	} catch {
+		return providers;
+	}
+	const catalog = await readCatalogCache(agentDir);
+	for (const id of new Set(ids)) {
+		const provider = runtime.getProvider(id);
+		if (!provider) continue;
+		try {
+			// The cache-only phase of pi's own refresh: restores the catalog, never fetches or saves.
+			await provider.refreshModels?.({
+				stored: catalog[id] && structuredClone(catalog[id]),
+				allowNetwork: false,
+				signal: new AbortController().signal,
+				baseUrl: provider.baseUrl,
+				publish: async (publication) => {
+					publication.update?.();
+					return true;
+				},
+			});
+		} catch {
+			// Keeps the models.json layer; only the catalog updates are missing until session_start.
+		}
+		providers.set(id, provider);
+	}
+	return providers;
+}
 
 export function buildAlias(base: Provider | undefined, account: Account): Provider {
 	const id = accountId(account);

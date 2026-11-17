@@ -106,7 +106,6 @@ export default async function (pi: ExtensionAPI) {
 	} catch (error) {
 		loadError = `Named accounts are unavailable: ${errorMessage(error)}`;
 	}
-	// Built from the same models.json and catalog cache as pi's registry, which is not reachable yet.
 	const startup = await startupProviders(
 		agentDir,
 		snapshot.map((account) => account.provider),

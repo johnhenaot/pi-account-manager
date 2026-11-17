@@ -233,11 +233,6 @@ describe("/account add", () => {
 		expect(pi.last().message).toContain("already in use");
 		expect(await loadAccounts(agentDir)).toEqual([]);
 	});
-
-	/**
-	 * The pre-flight ID check runs before the lock and several awaits, so the ID can be
-	 * claimed while the command waits. Holding the lock makes that window deterministic.
-	 */
 });
 
 describe("/account remove", () => {
@@ -329,10 +324,7 @@ describe("/account remove", () => {
 		expect(pi.credentials.entries.has("anthropic@other")).toBe(true);
 	});
 
-	/**
-	 * The rollback only runs when publishing fails, which needs a rename that fails while the
-	 * read still succeeds. macOS `chflags uchg` gives exactly that, so this is darwin-only.
-	 */
+	// Only macOS `chflags uchg` makes the rename fail while the read still succeeds.
 	it.skipIf(process.platform !== "darwin")(
 		"does not re-register over a foreign provider when publishing fails",
 		async () => {
@@ -483,11 +475,7 @@ describe("anthropic extra-usage warning", () => {
 		expect(pi.notifications).toHaveLength(count);
 	});
 
-	/**
-	 * Pi never emits model_select for a restored session, so the warning has to come from
-	 * session_start reading ctx.model. Asserting a synthetic source: "restore" event would
-	 * only test the mock.
-	 */
+	// Pi never emits model_select for a restored session, so session_start has to read ctx.model.
 	it("warns for a session restored onto an alias model", async () => {
 		await writeStateFile(agentDir, { version: 1, accounts: [work] });
 		const pi = await start();

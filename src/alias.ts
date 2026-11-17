@@ -16,9 +16,11 @@ import { type Account, accountId, PROVIDERS, type ProviderId } from "./account.t
 export const bundledProvider = (provider: ProviderId): Provider | undefined =>
 	builtinProviders().find((candidate) => candidate.id === provider);
 
+const withoutBom = (text: string) => text.replace(/^\uFEFF/, "");
+
 async function readCachedCatalogs(agentDir: string): Promise<Record<string, ModelsStoreEntry | undefined>> {
 	try {
-		const parsed: unknown = JSON.parse(await readFile(join(agentDir, "models-store.json"), "utf8"));
+		const parsed: unknown = JSON.parse(withoutBom(await readFile(join(agentDir, "models-store.json"), "utf8")));
 		return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, ModelsStoreEntry>) : {};
 	} catch {
 		return {};

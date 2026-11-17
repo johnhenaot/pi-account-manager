@@ -131,6 +131,14 @@ describe("startup provider rebuild", () => {
 		expect(ids).not.toContain(MODELS_JSON_MODEL);
 	});
 
+	it("reads a catalog cache that starts with a UTF-8 BOM, as pi does", async () => {
+		const cache = join(agentDir, "models-store.json");
+		await writeFile(cache, `\uFEFF${await readFile(cache, "utf8")}`);
+		const runtime = await startPiUpToFlagResolution();
+		expect(runtime.getModels("openai").map((model) => model.id)).toContain(CATALOG_MODEL);
+		expect(runtime.getModels(ALIAS).map((model) => model.id)).toContain(CATALOG_MODEL);
+	});
+
 	it("keeps models.json models when the catalog cache is broken", async () => {
 		await writeFile(join(agentDir, "models-store.json"), "{ broken");
 		const ids = (await startupProviders(agentDir, ["openai"]))

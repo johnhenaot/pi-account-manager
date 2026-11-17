@@ -53,7 +53,6 @@ export function memoryCredentials(): CredentialStore & { entries: Map<string, Cr
 	};
 }
 
-/** A real pi registry with no network, no models.json, and in-memory credentials. */
 export async function realRegistry(agentDir: string) {
 	const credentials = memoryCredentials();
 	const runtime = await ModelRuntime.create({
@@ -65,7 +64,6 @@ export async function realRegistry(agentDir: string) {
 	return { credentials, runtime, registry: new ModelRegistry(runtime) };
 }
 
-/** A minimal provider whose stream echoes back the provider it was handed. */
 export function stubProvider(id: string, options: { oauth?: boolean; models?: number } = {}): Provider {
 	const models = Array.from({ length: options.models ?? 2 }, (_, index) => ({
 		id: `model-${index}`,
@@ -157,11 +155,9 @@ export interface Notification {
 export interface HarnessOptions {
 	editorText?: string;
 	answers?: (string | undefined)[];
-	/** Make pi reject this provider ID, to exercise registration rollback. */
 	rejectProviderId?: string;
 }
 
-/** Drives the real extension factory against a real registry and a scripted UI. */
 export async function harness(agentDir: string, options: HarnessOptions = {}) {
 	const { credentials, runtime, registry } = await realRegistry(agentDir);
 	const notifications: Notification[] = [];

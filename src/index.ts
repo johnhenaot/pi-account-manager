@@ -106,6 +106,7 @@ export default async function (pi: ExtensionAPI) {
 	} catch (error) {
 		loadError = `Named accounts are unavailable: ${errorMessage(error)}`;
 	}
+	// Pi resolves --model and --thinking before session_start, and its registry is not reachable yet.
 	const startup = await startupProviders(
 		agentDir,
 		snapshot.map((account) => account.provider),

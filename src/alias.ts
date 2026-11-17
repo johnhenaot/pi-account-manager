@@ -30,6 +30,7 @@ const offlineRuntimeWithoutCredentials = (agentDir: string): Promise<ModelRuntim
 		credentials: new InMemoryCredentialStore(),
 		modelsPath: join(agentDir, "models.json"),
 		modelsStore: new InMemoryModelsStore(),
+		// A full refresh also checks auth, which can run models.json key commands a second time.
 		refreshOnCreate: false,
 	});
 

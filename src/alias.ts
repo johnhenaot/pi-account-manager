@@ -1,9 +1,73 @@
-import type { Api, Model, Provider, StreamOptions } from "@earendil-works/pi-ai";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import {
+	type Api,
+	InMemoryCredentialStore,
+	InMemoryModelsStore,
+	type Model,
+	type ModelsStoreEntry,
+	type Provider,
+	type StreamOptions,
+} from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { type Account, accountId, PROVIDERS, type ProviderId } from "./account.ts";
 
 export const bundledProvider = (provider: ProviderId): Provider | undefined =>
 	builtinProviders().find((candidate) => candidate.id === provider);
+
+const withoutBom = (text: string) => text.replace(/^\uFEFF/, "");
+
+async function readCachedCatalogs(agentDir: string): Promise<Record<string, ModelsStoreEntry | undefined>> {
+	try {
+		const parsed: unknown = JSON.parse(withoutBom(await readFile(join(agentDir, "models-store.json"), "utf8")));
+		return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, ModelsStoreEntry>) : {};
+	} catch {
+		return {};
+	}
+}
+
+const offlineRuntimeWithoutCredentials = (agentDir: string): Promise<ModelRuntime> =>
+	ModelRuntime.create({
+		credentials: new InMemoryCredentialStore(),
+		modelsPath: join(agentDir, "models.json"),
+		modelsStore: new InMemoryModelsStore(),
+		// A full refresh also checks auth, which can run models.json key commands a second time.
+		refreshOnCreate: false,
+	});
+
+async function restoreCachedCatalog(provider: Provider, cached: ModelsStoreEntry | undefined): Promise<void> {
+	try {
+		await provider.refreshModels?.({
+			stored: cached && structuredClone(cached),
+			allowNetwork: false,
+			signal: new AbortController().signal,
+			baseUrl: provider.baseUrl,
+			publish: async (publication) => {
+				publication.update?.();
+				return true;
+			},
+		});
+	} catch {}
+}
+
+export async function startupProviders(
+	agentDir: string,
+	ids: readonly ProviderId[],
+): Promise<Map<ProviderId, Provider>> {
+	const providers = new Map<ProviderId, Provider>();
+	if (ids.length === 0) return providers;
+	const runtime = await offlineRuntimeWithoutCredentials(agentDir).catch(() => undefined);
+	if (!runtime) return providers;
+	const catalogs = await readCachedCatalogs(agentDir);
+	for (const id of new Set(ids)) {
+		const provider = runtime.getProvider(id);
+		if (!provider) continue;
+		await restoreCachedCatalog(provider, catalogs[id]);
+		providers.set(id, provider);
+	}
+	return providers;
+}
 
 export function buildAlias(base: Provider | undefined, account: Account): Provider {
 	const id = accountId(account);

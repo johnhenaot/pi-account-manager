@@ -16,7 +16,7 @@ import {
 	PROVIDERS,
 	sortAccounts,
 } from "./account.ts";
-import { buildAlias, bundledProvider } from "./alias.ts";
+import { buildAlias, bundledProvider, startupProviders } from "./alias.ts";
 import { loadAccounts, saveAccounts } from "./state.ts";
 
 export const ANTHROPIC_EXTRA_USAGE_WARNING =
@@ -106,7 +106,12 @@ export default async function (pi: ExtensionAPI) {
 	} catch (error) {
 		loadError = `Named accounts are unavailable: ${errorMessage(error)}`;
 	}
-	registerAll((account) => bundledProvider(account.provider));
+	// Pi resolves --model and --thinking before session_start, and its registry is not reachable yet.
+	const startup = await startupProviders(
+		agentDir,
+		snapshot.map((account) => account.provider),
+	);
+	registerAll((account) => startup.get(account.provider) ?? bundledProvider(account.provider));
 
 	const isOwnAnthropicAlias = (providerId: string | undefined): boolean =>
 		snapshot.some((account) => account.provider === "anthropic" && accountId(account) === providerId);

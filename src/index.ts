@@ -34,7 +34,7 @@ export const EMPTY_LIST = "No named accounts. Use /account add NAME.";
 
 // A peer range cannot express this: pi supplies the bundled packages at load time, so the
 // package manager never sees which pi binary runs.
-export const MIN_PI = "1.2.0";
+export const MIN_PI = "1.6.0";
 export const meetsMinimum = (version: string): boolean =>
 	version.localeCompare(MIN_PI, undefined, { numeric: true }) >= 0;
 

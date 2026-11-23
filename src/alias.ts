@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
 	type Api,
+	createModels,
 	InMemoryCredentialStore,
 	InMemoryModelsStore,
 	type Model,
@@ -27,46 +28,29 @@ async function readCachedCatalogs(agentDir: string): Promise<Record<string, Mode
 	}
 }
 
-const offlineRuntimeWithoutCredentials = (agentDir: string): Promise<ModelRuntime> =>
-	ModelRuntime.create({
+export async function startupProviders(agentDir: string, ids: readonly ProviderId[]) {
+	if (ids.length === 0) return;
+	const modelsStore = new InMemoryModelsStore();
+	const runtime = await ModelRuntime.create({
 		credentials: new InMemoryCredentialStore(),
 		modelsPath: join(agentDir, "models.json"),
-		modelsStore: new InMemoryModelsStore(),
-		// A full refresh also checks auth, which can run models.json key commands a second time.
+		modelsStore,
 		refreshOnCreate: false,
-	});
+	}).catch(() => undefined);
+	if (!runtime) return;
 
-async function restoreCachedCatalog(provider: Provider, cached: ModelsStoreEntry | undefined): Promise<void> {
-	try {
-		await provider.refreshModels?.({
-			stored: cached && structuredClone(cached),
-			allowNetwork: false,
-			signal: new AbortController().signal,
-			baseUrl: provider.baseUrl,
-			publish: async (publication) => {
-				publication.update?.();
-				return true;
-			},
-		});
-	} catch {}
-}
-
-export async function startupProviders(
-	agentDir: string,
-	ids: readonly ProviderId[],
-): Promise<Map<ProviderId, Provider>> {
-	const providers = new Map<ProviderId, Provider>();
-	if (ids.length === 0) return providers;
-	const runtime = await offlineRuntimeWithoutCredentials(agentDir).catch(() => undefined);
-	if (!runtime) return providers;
+	// Refresh the catalogs without ModelRuntime's availability and auth checks.
+	const models = createModels({ modelsStore });
 	const catalogs = await readCachedCatalogs(agentDir);
 	for (const id of new Set(ids)) {
 		const provider = runtime.getProvider(id);
 		if (!provider) continue;
-		await restoreCachedCatalog(provider, catalogs[id]);
-		providers.set(id, provider);
+		models.setProvider(provider);
+		const entry = catalogs[id];
+		if (entry) await modelsStore.write(id, entry).catch(() => {});
 	}
-	return providers;
+	await models.refresh({ allowNetwork: false });
+	return models;
 }
 
 export function buildAlias(base: Provider | undefined, account: Account): Provider {

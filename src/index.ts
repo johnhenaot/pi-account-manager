@@ -111,7 +111,7 @@ export default async function (pi: ExtensionAPI) {
 		agentDir,
 		snapshot.map((account) => account.provider),
 	);
-	registerAll((account) => startup.get(account.provider) ?? bundledProvider(account.provider));
+	registerAll((account) => startup?.getProvider(account.provider) ?? bundledProvider(account.provider));
 
 	const isOwnAnthropicAlias = (providerId: string | undefined): boolean =>
 		snapshot.some((account) => account.provider === "anthropic" && accountId(account) === providerId);

@@ -39,7 +39,6 @@ export async function startupProviders(agentDir: string, ids: readonly ProviderI
 	}).catch(() => undefined);
 	if (!runtime) return;
 
-	// Refresh the catalogs without ModelRuntime's availability and auth checks.
 	const models = createModels({ modelsStore });
 	const catalogs = await readCachedCatalogs(agentDir);
 	for (const id of new Set(ids)) {

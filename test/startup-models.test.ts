@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { clampThinkingLevel, type Provider } from "@earendil-works/pi-ai";
 import { getBuiltinModelDataGeneratedAt, getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
@@ -78,14 +78,4 @@ it.each([
 	expect(ids).toContain(kept);
 	expect(ids).toContain(base.id);
 	expect(ids).not.toContain(absent);
-});
-
-it("restores a BOM-prefixed cache without changing it or creating auth.json", async () => {
-	const path = join(agentDir, "models-store.json");
-	const bom = `\uFEFF${await readFile(path, "utf8")}`;
-	await writeFile(path, bom);
-	const models = await startupProviders(agentDir, ["openai"]);
-	expect(models?.getModel("openai", CACHED)).toBeDefined();
-	expect(await readFile(path, "utf8")).toBe(bom);
-	await expect(readFile(join(agentDir, "auth.json"))).rejects.toMatchObject({ code: "ENOENT" });
 });

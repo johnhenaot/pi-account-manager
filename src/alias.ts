@@ -1,12 +1,8 @@
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
 	type Api,
-	createModels,
 	InMemoryCredentialStore,
-	InMemoryModelsStore,
 	type Model,
-	type ModelsStoreEntry,
 	type Provider,
 	type StreamOptions,
 } from "@earendil-works/pi-ai";
@@ -17,39 +13,13 @@ import { type Account, accountId, PROVIDERS, type ProviderId } from "./account.t
 export const bundledProvider = (provider: ProviderId): Provider | undefined =>
 	builtinProviders().find((candidate) => candidate.id === provider);
 
-const withoutBom = (text: string) => text.replace(/^\uFEFF/, "");
-
-async function readCachedCatalogs(agentDir: string): Promise<Record<string, ModelsStoreEntry | undefined>> {
-	try {
-		const parsed: unknown = JSON.parse(withoutBom(await readFile(join(agentDir, "models-store.json"), "utf8")));
-		return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, ModelsStoreEntry>) : {};
-	} catch {
-		return {};
-	}
-}
-
+// Pi's own offline load: models.json plus the models-store.json cache beside it, no network.
 export async function startupProviders(agentDir: string, ids: readonly ProviderId[]) {
 	if (ids.length === 0) return;
-	const modelsStore = new InMemoryModelsStore();
-	const runtime = await ModelRuntime.create({
+	return ModelRuntime.create({
 		credentials: new InMemoryCredentialStore(),
 		modelsPath: join(agentDir, "models.json"),
-		modelsStore,
-		refreshOnCreate: false,
 	}).catch(() => undefined);
-	if (!runtime) return;
-
-	const models = createModels({ modelsStore });
-	const catalogs = await readCachedCatalogs(agentDir);
-	for (const id of new Set(ids)) {
-		const provider = runtime.getProvider(id);
-		if (!provider) continue;
-		models.setProvider(provider);
-		const entry = catalogs[id];
-		if (entry) await modelsStore.write(id, entry).catch(() => {});
-	}
-	await models.refresh({ allowNetwork: false });
-	return models;
 }
 
 export function buildAlias(base: Provider | undefined, account: Account): Provider {

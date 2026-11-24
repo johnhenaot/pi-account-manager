@@ -1,6 +1,6 @@
 {
 	"name": "pi-account-manager",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "Pi extension for managing multiple named OAuth accounts per provider",
 	"license": "MIT",
 	"author": "John Henao <johnhenaot@gmail.com>",

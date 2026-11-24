@@ -32,17 +32,13 @@ export const USAGE = [
 
 export const EMPTY_LIST = "No named accounts. Use /account add NAME.";
 
-// A peer range cannot express this: pi supplies the bundled packages at load time, so the
-// package manager never sees which pi binary runs.
-export const MIN_PI = "1.2.0";
+// A peer range cannot enforce this: pi loads its own bundled packages, so npm never sees which pi runs.
+export const MIN_PI = "1.6.0";
 export const meetsMinimum = (version: string): boolean =>
 	version.localeCompare(MIN_PI, undefined, { numeric: true }) >= 0;
 
-// On globalThis, not the closure: `/reload` re-runs the factory in the same process, and
-// both warnings must fire at most once per process.
 export const WARNED = Symbol.for("pi-account-manager.warned");
-// SAFETY: only this extension's Symbol.for key is read or written on globalThis.
-const warned = (): { anthropic?: true; version?: true } =>
+const warnedThisProcess = (): { anthropic?: true; version?: true } =>
 	((globalThis as unknown as Record<symbol, object>)[WARNED] ??= {});
 
 export function isAuthenticated(registry: ModelRegistry, id: string): boolean {
@@ -58,7 +54,6 @@ function anthropicWarningEnabled(ctx: ExtensionContext): boolean {
 		const settings = SettingsManager.create(ctx.cwd, undefined, { projectTrusted: ctx.isProjectTrusted() });
 		return settings.getWarnings().anthropicExtraUsage !== false;
 	} catch {
-		// An unreadable setting must not silently disable the warning.
 		return true;
 	}
 }
@@ -106,46 +101,37 @@ export default async function (pi: ExtensionAPI) {
 		loadError = `Named accounts are unavailable: ${errorMessage(error)}`;
 	}
 
-	const cliModelCatalog = await startupProviders(
-		agentDir,
-		snapshot.map(({ provider }) => provider),
-	);
+	const cliModelCatalog = snapshot.length > 0 ? await startupProviders(agentDir) : undefined;
 	registerAccountAliases(({ provider }) => cliModelCatalog?.getProvider(provider) ?? bundledProvider(provider));
 
 	const isOwnAnthropicAlias = (providerId: string | undefined): boolean =>
 		snapshot.some((account) => account.provider === "anthropic" && accountId(account) === providerId);
 
-	// Pi never warns for alias providers itself, and never emits model_select on restore.
 	const maybeWarnAnthropic = (ctx: ExtensionContext, providerId: string | undefined) => {
-		if (ctx.mode !== "tui" || warned().anthropic || !providerId || !isOwnAnthropicAlias(providerId)) return;
+		if (ctx.mode !== "tui" || warnedThisProcess().anthropic || !providerId || !isOwnAnthropicAlias(providerId)) return;
 		if (!isAuthenticated(ctx.modelRegistry, providerId) || !anthropicWarningEnabled(ctx)) return;
-		warned().anthropic = true;
+		warnedThisProcess().anthropic = true;
 		ctx.ui.notify(ANTHROPIC_EXTRA_USAGE_WARNING, "warning");
 	};
 
 	pi.on("session_start", async (_event, ctx) => {
-		if (ctx.mode === "tui" && !warned().version && !meetsMinimum(VERSION)) {
-			warned().version = true;
+		if (ctx.mode === "tui" && !warnedThisProcess().version && !meetsMinimum(VERSION)) {
+			warnedThisProcess().version = true;
 			ctx.ui.notify(
 				`pi-account-manager requires pi ${MIN_PI} or newer; this host is ${VERSION}. Named accounts may not work correctly.`,
 				"warning",
 			);
 		}
 
-		// Rebuilt against the effective registry, which includes any models.json overlay. Through
-		// `pi` rather than ctx.modelRegistry, because only that path refreshes the live model.
+		// Registers through pi, not ctx.modelRegistry: only pi's path refreshes the session's live model.
 		registerAccountAliases(({ provider }) => ctx.modelRegistry.getProvider(provider));
 
-		// A restored session assigns its model directly, emitting no model_select.
 		if (isOwnAnthropicAlias(ctx.model?.provider)) {
-			// Advisory only, so a refresh failure must not break session restore.
 			await ctx.modelRegistry.refresh().catch(() => {});
 			maybeWarnAnthropic(ctx, ctx.model?.provider);
 		}
 	});
 
-	// Pi reuses one ModelRuntime across /reload but hands the reload a fresh closure, so
-	// without this the previous instance's aliases stay registered forever.
 	pi.on("session_shutdown", (event, ctx) => {
 		if (event.reason !== "reload") return;
 		for (const account of snapshot) ctx.modelRegistry.unregisterProvider(accountId(account));
@@ -168,13 +154,12 @@ export default async function (pi: ExtensionAPI) {
 		const account: Account = { provider, name };
 		const id = accountId(account);
 		try {
-			// Re-read so an account another pi process added since startup is kept.
-			const accounts = await loadAccounts(agentDir);
-			if (accounts.some((existing) => accountId(existing) === id))
+			const accountsOnDisk = await loadAccounts(agentDir);
+			if (accountsOnDisk.some((existing) => accountId(existing) === id))
 				throw new Error(`already exists. Use /login ${id} to reauthenticate it.`);
 			if (ctx.modelRegistry.getProvider(id)) throw new Error(`provider ID "${id}" is already in use.`);
 			const alias = buildAlias(ctx.modelRegistry.getProvider(provider), account);
-			await saveAccounts(agentDir, [...accounts, account]);
+			await saveAccounts(agentDir, [...accountsOnDisk, account]);
 			snapshot = sortAccounts([...snapshot, account]);
 			try {
 				pi.registerProvider(alias);
@@ -187,7 +172,6 @@ export default async function (pi: ExtensionAPI) {
 		}
 
 		const login = `/login ${id}`;
-		// Not trimmed: a fresh pi editor is exactly "", so whitespace is a real draft.
 		if (ctx.ui.getEditorText() === "") {
 			ctx.ui.setEditorText(login);
 			ctx.ui.notify(`Added ${id}. Submit the prepared command to sign in.`, "info");
@@ -206,11 +190,8 @@ export default async function (pi: ExtensionAPI) {
 			ctx.ui.notify(argument === undefined ? EMPTY_LIST : `No named account matches "${argument}".`, "error");
 			return;
 		}
-		// No argument always asks, so a lone account is never removed without confirmation.
-		const id =
-			argument !== undefined && matches.length === 1
-				? accountId(matches[0])
-				: await ctx.ui.select("Remove account", matches.map(accountId));
+		const namedOneAccount = argument !== undefined && matches.length === 1;
+		const id = namedOneAccount ? accountId(matches[0]) : await ctx.ui.select("Remove account", matches.map(accountId));
 		if (id === undefined) return;
 
 		const blockers: string[] = [];
@@ -218,10 +199,10 @@ export default async function (pi: ExtensionAPI) {
 		if (ctx.model?.provider === id) blockers.push("Select another model with /model first.");
 		try {
 			if (blockers.length > 0) throw new Error(blockers.join("\n"));
-			const accounts = await loadAccounts(agentDir);
+			const accountsOnDisk = await loadAccounts(agentDir);
 			await saveAccounts(
 				agentDir,
-				accounts.filter((account) => accountId(account) !== id),
+				accountsOnDisk.filter((account) => accountId(account) !== id),
 			);
 			snapshot = snapshot.filter((account) => accountId(account) !== id);
 			pi.unregisterProvider(id);

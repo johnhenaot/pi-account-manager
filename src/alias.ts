@@ -13,12 +13,11 @@ import { type Account, accountId, PROVIDERS, type ProviderId } from "./account.t
 export const bundledProvider = (provider: ProviderId): Provider | undefined =>
 	builtinProviders().find((candidate) => candidate.id === provider);
 
-// Pi's own offline load: models.json plus the models-store.json cache beside it, no network.
-export async function startupProviders(agentDir: string, ids: readonly ProviderId[]) {
-	if (ids.length === 0) return;
+export async function startupProviders(agentDir: string) {
 	return ModelRuntime.create({
 		credentials: new InMemoryCredentialStore(),
 		modelsPath: join(agentDir, "models.json"),
+		allowModelNetwork: false,
 	}).catch(() => undefined);
 }
 
@@ -54,17 +53,8 @@ export function buildAlias(base: Provider | undefined, account: Account): Provid
 		};
 
 	const streamRequest = <T extends StreamOptions | undefined>(model: Model<Api>, options: T) => {
-		if (account.provider === "anthropic" && model.api === "anthropic-messages") {
-			// Pi 49fe0a2 makes this the default for every provider; remove once MIN_PI includes it.
-			if (
-				(model as Model<"anthropic-messages">).compat?.supportsMessageThreads === undefined &&
-				model.baseUrl.includes("api.anthropic.com")
-			) {
-				model = { ...model, compat: { ...model.compat, supportsMessageThreads: true } };
-			}
-			// Keeps each account's thread and fallback state apart. Shortcut: Pi's session cleanup misses
-			// these scoped ids; Pi's 10k caps bound them. Track the ids if that ever matters.
-			if (options?.sessionId) options = { ...options, sessionId: `${options.sessionId}:${id}` };
+		if (account.provider === "anthropic" && model.api === "anthropic-messages" && options?.sessionId) {
+			options = { ...options, sessionId: `${options.sessionId}:${id}` };
 		}
 		return isChatGPTSubscription(model, options)
 			? {
@@ -79,9 +69,6 @@ export function buildAlias(base: Provider | undefined, account: Account): Provid
 		name: `${PROVIDERS[account.provider]} (${account.name})`,
 		baseUrl: base.baseUrl,
 		headers: base.headers,
-		// Omitting `apiKey` is the isolation: the alias can only reach its own OAuth token,
-		// never the native key or an ambient credential. Exception (documented in the README):
-		// headers that models.json attaches to the native provider's OAuth still apply.
 		auth: { oauth },
 		getModels: () => reprovision(base.getModels(), id),
 		filterModels:
@@ -90,8 +77,6 @@ export function buildAlias(base: Provider | undefined, account: Account): Provid
 				const kept = new Set(base.filterModels!(reprovision(models, base.id), credential).map((model) => model.id));
 				return models.filter((model) => kept.has(model.id));
 			}),
-		// The model keeps `provider: <alias id>`, which is what makes pi attribute every stream
-		// event, message, and session entry to this account.
 		stream: (model, context, options) => {
 			const request = streamRequest(model, options);
 			return base.stream(request.model, context, request.options);

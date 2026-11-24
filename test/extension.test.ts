@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Account } from "../src/account.ts";
 import {
 	ANTHROPIC_EXTRA_USAGE_WARNING,
@@ -38,6 +38,8 @@ afterEach(async () => {
 const work: Account = { provider: "anthropic", name: "work" };
 
 const start = (options: HarnessOptions = {}) => harness(agentDir, options);
+
+const anotherProcessSaves = (accounts: Account[]) => writeStateFile(agentDir, { version: 1, accounts });
 
 describe("OpenAI subscription accounts", () => {
 	it("adds, lists, reloads, and removes an OpenAI account alongside a legacy account", async () => {
@@ -130,8 +132,7 @@ describe("/account list", () => {
 		await writeStateFile(agentDir, { version: 1, accounts: [work] });
 		const pi = await start();
 
-		// Another process changes the file; this process keeps its snapshot until reload.
-		await writeStateFile(agentDir, { version: 1, accounts: [{ provider: "openai-codex", name: "elsewhere" }] });
+		await anotherProcessSaves([{ provider: "openai-codex", name: "elsewhere" }]);
 		await pi.account("list");
 		expect(pi.last().message).toContain("anthropic@work");
 		expect(pi.last().message).not.toContain("elsewhere");
@@ -168,7 +169,6 @@ describe("/account add", () => {
 	});
 
 	it("preserves a whitespace-only editor instead of treating it as empty", async () => {
-		// A fresh pi editor is exactly "", so whitespace is a real draft.
 		const pi = await start({ editorText: "  \n ", answers: ["Anthropic"] });
 		await pi.account("add work");
 		expect(pi.editor()).toBe("  \n ");
@@ -214,6 +214,14 @@ describe("/account add", () => {
 		await pi.account("add work");
 		expect(pi.last().type).toBe("error");
 		expect(pi.last().message).toContain("already exists. Use /login anthropic@work to reauthenticate it.");
+	});
+
+	it("keeps an account another pi process saved since startup", async () => {
+		const pi = await start({ answers: ["Anthropic"] });
+		const elsewhere: Account = { provider: "openai-codex", name: "elsewhere" };
+		await anotherProcessSaves([elsewhere]);
+		await pi.account("add work");
+		expect(await loadAccounts(agentDir)).toEqual([work, elsewhere]);
 	});
 
 	it("allows the same name under the other provider", async () => {
@@ -272,7 +280,7 @@ describe("/account remove", () => {
 		expect(await loadAccounts(agentDir)).toEqual([]);
 	});
 
-	it("makes no state change when the selector is cancelled", async () => {
+	it("asks before removing even the only account, so cancelling the selector changes nothing", async () => {
 		const pi = await seeded([work], { answers: [undefined] });
 		await pi.account("remove");
 		expect(await loadAccounts(agentDir)).toEqual([work]);
@@ -338,7 +346,6 @@ describe("/account remove", () => {
 			}
 
 			expect(pi.last().type).toBe("error");
-			// The rollback must not resurrect our alias over the provider that owns the ID.
 			expect(pi.registry.getRegisteredNativeProvider("anthropic@work")).toBe(foreign);
 			expect(await loadAccounts(agentDir)).toEqual([work]);
 		},
@@ -386,12 +393,10 @@ describe("loading lifecycle", () => {
 		const ok = await start();
 		expect([...ok.providers.keys()]).toHaveLength(3);
 
-		// The third registration fails, so the first two must be rolled back.
 		const failed = await start({ rejectProviderId: "openai-codex@third" });
 		expect([...failed.providers.keys()]).toEqual([]);
 		expect(failed.registry.getProvider("anthropic@work")).toBeUndefined();
 		expect(failed.registry.getProvider("anthropic@second")).toBeUndefined();
-		// Native providers stay usable, and /account still reports the failure.
 		expect(failed.registry.getProvider("anthropic")?.id).toBe("anthropic");
 		await failed.account("");
 		expect(failed.last().type).toBe("error");
@@ -409,7 +414,6 @@ describe("loading lifecycle", () => {
 		pi.rejectProvider("openai-codex@personal");
 		await pi.emit("session_start", { type: "session_start", reason: "reload" });
 
-		// Neither the replacement nor the bootstrap alias may survive.
 		expect(pi.registry.getProvider("anthropic@work")).toBeUndefined();
 		expect(pi.registry.getProvider("openai-codex@personal")).toBeUndefined();
 		expect(pi.registry.getProvider("anthropic")?.id).toBe("anthropic");
@@ -428,12 +432,11 @@ describe("loading lifecycle", () => {
 		expect(pi.registry.getAll().some((model) => model.provider === "anthropic")).toBe(true);
 	});
 
-	it("recreates the same alias when the same pair is re-added", async () => {
+	it("re-adds the same pair as the same alias, so its kept credential authenticates it at once", async () => {
 		const pi = await start({ answers: ["Anthropic"] });
 		await pi.credentials.modify("anthropic@work", async () => oauthCredential());
 		await pi.account("add work");
 		await pi.runtime.refresh({ allowNetwork: false });
-		// An externally kept credential makes the re-added account immediately authenticated.
 		expect(isAuthenticated(pi.registry, "anthropic@work")).toBe(true);
 	});
 });
@@ -485,6 +488,33 @@ describe("anthropic extra-usage warning", () => {
 		expect(pi.last()).toEqual({ message: ANTHROPIC_EXTRA_USAGE_WARNING, type: "warning" });
 	});
 
+	it("still warns on restore when the registry refresh fails", async () => {
+		await writeStateFile(agentDir, { version: 1, accounts: [work] });
+		const pi = await start();
+		await pi.credentials.modify("anthropic@work", async () => oauthCredential());
+		await pi.runtime.refresh({ allowNetwork: false });
+
+		pi.setModel(modelOf(pi, "anthropic@work"));
+		vi.spyOn(pi.registry, "refresh").mockRejectedValue(new Error("offline"));
+		await pi.emit("session_start", { type: "session_start", reason: "resume" });
+		expect(pi.last()).toEqual({ message: ANTHROPIC_EXTRA_USAGE_WARNING, type: "warning" });
+	});
+
+	it("stays quiet on restore when the model moves to another provider while the registry refreshes", async () => {
+		await writeStateFile(agentDir, { version: 1, accounts: [work] });
+		const pi = await start();
+		await pi.credentials.modify("anthropic@work", async () => oauthCredential());
+		await pi.runtime.refresh({ allowNetwork: false });
+
+		pi.setModel(modelOf(pi, "anthropic@work"));
+		vi.spyOn(pi.registry, "refresh").mockImplementation(() => {
+			pi.setModel(modelOf(pi, "openai"));
+			return Promise.resolve(undefined as never);
+		});
+		await pi.emit("session_start", { type: "session_start", reason: "resume" });
+		expect(pi.notifications).toHaveLength(0);
+	});
+
 	it("stays quiet on restore for an unauthenticated or native model", async () => {
 		await writeStateFile(agentDir, { version: 1, accounts: [work] });
 		const pi = await start();
@@ -499,17 +529,18 @@ describe("anthropic extra-usage warning", () => {
 		expect(pi.notifications).toHaveLength(0);
 	});
 
-	it("stays latched across a reload in the same process", async () => {
-		const first = await authenticated();
-		select(first, "anthropic@work");
-		expect(first.last().message).toBe(ANTHROPIC_EXTRA_USAGE_WARNING);
+	it("stays latched when /reload re-evaluates the extension in the same process", async () => {
+		const beforeReload = await authenticated();
+		select(beforeReload, "anthropic@work");
+		expect(beforeReload.last().message).toBe(ANTHROPIC_EXTRA_USAGE_WARNING);
 
-		// /reload re-runs the factory; the latch must outlive the closure.
-		const second = await start();
-		await second.credentials.modify("anthropic@work", async () => oauthCredential());
-		await second.runtime.refresh({ allowNetwork: false });
-		select(second, "anthropic@work");
-		expect(second.notifications).toHaveLength(0);
+		vi.resetModules();
+		const { default: reloadedExtension } = await import("../src/index.ts");
+		const afterReload = await start({ extension: reloadedExtension });
+		await afterReload.credentials.modify("anthropic@work", async () => oauthCredential());
+		await afterReload.runtime.refresh({ allowNetwork: false });
+		select(afterReload, "anthropic@work");
+		expect(afterReload.notifications).toHaveLength(0);
 	});
 
 	it("stays quiet for other providers and for unauthenticated aliases", async () => {
@@ -554,7 +585,7 @@ describe("anthropic extra-usage warning", () => {
 });
 
 describe("reload cleanup", () => {
-	it("unregisters this instance's aliases on session_shutdown for a reload", async () => {
+	it("unregisters this instance's aliases on reload, since pi keeps the registry for the next instance", async () => {
 		await writeStateFile(agentDir, {
 			version: 1,
 			accounts: [work, { provider: "openai-codex", name: "personal" }],
@@ -565,7 +596,6 @@ describe("reload cleanup", () => {
 		await pi.emit("session_shutdown", { type: "session_shutdown", reason: "reload" });
 		expect(pi.registry.getProvider("anthropic@work")).toBeUndefined();
 		expect(pi.registry.getProvider("openai-codex@personal")).toBeUndefined();
-		// Native providers are untouched.
 		expect(pi.registry.getProvider("anthropic")?.id).toBe("anthropic");
 	});
 
@@ -577,21 +607,6 @@ describe("reload cleanup", () => {
 			expect(pi.registry.getProvider("anthropic@work"), reason).toBeDefined();
 		}
 	});
-
-	it("lets a removed account's name be re-added after a reload", async () => {
-		await writeStateFile(agentDir, { version: 1, accounts: [work] });
-		const first = await start();
-		await first.emit("session_shutdown", { type: "session_shutdown", reason: "reload" });
-
-		// Another process removed the account; this process reloads into the new state.
-		await writeStateFile(agentDir, { version: 1, accounts: [] });
-		const second = await harness(agentDir, { answers: ["Anthropic"] });
-		await second.emit("session_start", { type: "session_start", reason: "reload" });
-
-		await second.account("add work");
-		expect(second.last().type).toBe("info");
-		expect(await loadAccounts(agentDir)).toEqual([work]);
-	});
 });
 
 describe("host version notice", () => {
@@ -602,22 +617,20 @@ describe("host version notice", () => {
 	});
 
 	it("accepts the minimum and anything newer, rejects older", () => {
-		expect(MIN_PI).toBe("1.2.0");
-		for (const v of ["1.2.0", "1.2.1", "1.10.0", "2.0.0", "1.2.0-beta.1"]) expect(meetsMinimum(v), v).toBe(true);
-		for (const v of ["0.82.1", "1.0.0", "1.1.9"]) expect(meetsMinimum(v), v).toBe(false);
+		expect(MIN_PI).toBe("1.6.0");
+		for (const v of ["1.6.0", "1.6.1", "1.10.0", "2.0.0", "1.6.0-beta.1"]) expect(meetsMinimum(v), v).toBe(true);
+		for (const v of ["0.82.1", "1.2.0", "1.5.2"]) expect(meetsMinimum(v), v).toBe(false);
 	});
 });
 
 describe("provider ID already registered by config", () => {
-	// A models.json-shaped registration of the same ID must not be replaced by a new account.
-	const claimByConfig = (pi: Awaited<ReturnType<typeof harness>>) =>
-		pi.registry.registerProvider("anthropic@work", { name: "Foreign", baseUrl: "https://foreign.example.com" });
-
-	it("refuses the ID on add", async () => {
+	it("refuses the ID on add instead of replacing the configured provider", async () => {
 		const pi = await start({ answers: ["Anthropic"] });
-		claimByConfig(pi);
+		const modelsJsonShapedConfig = { name: "Foreign", baseUrl: "https://foreign.example.com" };
+		pi.registry.registerProvider("anthropic@work", modelsJsonShapedConfig);
 		await pi.account("add work");
 		expect(pi.last().message).toContain("already in use");
 		expect(await loadAccounts(agentDir)).toEqual([]);
+		expect(pi.registry.getProvider("anthropic@work")?.name).toBe("Foreign");
 	});
 });

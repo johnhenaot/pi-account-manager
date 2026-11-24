@@ -1,6 +1,6 @@
 {
 	"name": "pi-account-manager",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "Pi extension for managing multiple named OAuth accounts per provider",
 	"license": "MIT",
 	"author": "John Henao <johnhenaot@gmail.com>",
@@ -42,8 +42,8 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.6.7",
-		"@earendil-works/pi-ai": "1.5.2",
-		"@earendil-works/pi-coding-agent": "1.5.2",
+		"@earendil-works/pi-ai": "1.6.0",
+		"@earendil-works/pi-coding-agent": "1.6.0",
 		"typescript": "^5.9.3",
 		"vitest": "^5.1.0"
 	},

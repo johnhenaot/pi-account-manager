@@ -1,3 +1,5 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { Provider } from "@earendil-works/pi-ai";
 import { normalizeContext } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -34,15 +36,6 @@ describe("buildAlias", () => {
 			expect(alias.id).toBe(`${provider}@personal`);
 			expect(alias.getModels().length).toBeGreaterThan(0);
 		}
-	});
-
-	it("exposes OAuth only, never an API key or ambient credential", () => {
-		const base = bundledProvider("anthropic")!;
-		const alias = buildAlias(base, work);
-		expect(alias.auth.oauth).toBe(base.auth.oauth);
-		expect(alias.auth.apiKey).toBeUndefined();
-		// The native provider does offer an API key path; the alias deliberately drops it.
-		expect(base.auth.apiKey).toBeDefined();
 	});
 
 	it("mirrors the native catalog with the alias ID as provider", () => {
@@ -140,6 +133,15 @@ describe("pi registry contract", () => {
 		expect(credentials.entries.has("anthropic")).toBe(false);
 	});
 
+	it("follows the headers models.json sets on the native provider, the documented exception to isolation", async () => {
+		const modelsPath = join(agentDir, "models.json");
+		await writeFile(modelsPath, JSON.stringify({ providers: { anthropic: { headers: { "x-fake-team": "blue" } } } }));
+		const { credentials, runtime, registry } = await realRegistry(agentDir, modelsPath);
+		registry.registerProvider(buildAlias(registry.getProvider("anthropic"), work));
+		await credentials.modify("anthropic@work", async () => oauthCredential());
+		expect((await runtime.getAuth("anthropic@work"))?.auth.headers).toMatchObject({ "x-fake-team": "blue" });
+	});
+
 	it("leaves the account registered but unauthenticated after logout", async () => {
 		const { credentials, runtime, registry } = await realRegistry(agentDir);
 		registry.registerProvider(buildAlias(registry.getProvider("anthropic"), work));
@@ -153,18 +155,16 @@ describe("pi registry contract", () => {
 		expect(runtime.getModels().some((m) => m.provider === "anthropic@work")).toBe(true);
 	});
 
-	it("participates in /login as an OAuth-only provider", async () => {
+	it("offers /login only pi's own Anthropic OAuth flow, dropping the native provider's API key option", async () => {
 		const { registry, runtime } = await realRegistry(agentDir);
 		const native = registry.getProvider("anthropic")!;
+		expect(native.auth.apiKey).toBeDefined();
 		registry.registerProvider(buildAlias(native, work));
 		await runtime.refresh({ allowNetwork: false });
 
 		const alias = runtime.getProvider("anthropic@work")!;
-		// pi's /login offers one option per auth method a provider exposes.
 		expect(alias.auth.apiKey).toBeUndefined();
-		// The native OAuth flow is reused, so /login runs pi's own Anthropic flow.
 		expect(alias.auth.oauth).toBe(native.auth.oauth);
-		expect(alias.auth.oauth?.name).toBe("Anthropic (Claude Pro/Max)");
 	});
 
 	it("unregisters cleanly, leaving the native provider usable", async () => {

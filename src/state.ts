@@ -40,13 +40,15 @@ export async function loadAccounts(agentDir: string): Promise<Account[]> {
 	}
 }
 
-// shortcut: no lock, so two pi processes changing accounts at the same instant can lose one
-// change; add a lock file if that ever happens in practice.
+async function writeAtomically(path: string, text: string): Promise<void> {
+	const temp = `${path}.${process.pid}.tmp`;
+	await writeFile(temp, text, "utf8");
+	await rename(temp, path);
+}
+
+// shortcut: no lock, so two pi processes saving at the same instant can lose one change; add a lock file if it happens.
 export async function saveAccounts(agentDir: string, accounts: readonly Account[]): Promise<void> {
 	const path = statePath(agentDir);
 	await mkdir(dirname(path), { recursive: true });
-	// Write-then-rename so a crash never leaves a half-written file.
-	const temp = `${path}.${process.pid}.tmp`;
-	await writeFile(temp, `${JSON.stringify({ version: 1, accounts: sortAccounts(accounts) }, null, 2)}\n`, "utf8");
-	await rename(temp, path);
+	await writeAtomically(path, `${JSON.stringify({ version: 1, accounts: sortAccounts(accounts) }, null, 2)}\n`);
 }

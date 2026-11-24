@@ -324,7 +324,6 @@ describe("/account remove", () => {
 		expect(pi.credentials.entries.has("anthropic@other")).toBe(true);
 	});
 
-	// Only macOS `chflags uchg` makes the rename fail while the read still succeeds.
 	it.skipIf(process.platform !== "darwin")(
 		"does not re-register over a foreign provider when publishing fails",
 		async () => {
@@ -475,7 +474,6 @@ describe("anthropic extra-usage warning", () => {
 		expect(pi.notifications).toHaveLength(count);
 	});
 
-	// Pi never emits model_select for a restored session, so session_start has to read ctx.model.
 	it("warns for a session restored onto an alias model", async () => {
 		await writeStateFile(agentDir, { version: 1, accounts: [work] });
 		const pi = await start();

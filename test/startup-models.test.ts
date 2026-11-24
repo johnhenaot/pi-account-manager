@@ -73,7 +73,7 @@ it.each([
 	["models-store.json", LOCAL, CACHED],
 ])("a broken %s leaves the other source intact", async (file, kept, absent) => {
 	await writeFile(join(agentDir, file), "{ broken");
-	const models = await startupProviders(agentDir, ["openai"]);
+	const models = await startupProviders(agentDir);
 	const ids = models?.getModels("openai").map((model) => model.id);
 	expect(ids).toContain(kept);
 	expect(ids).toContain(base.id);

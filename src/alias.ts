@@ -13,12 +13,10 @@ import { type Account, accountId, PROVIDERS, type ProviderId } from "./account.t
 export const bundledProvider = (provider: ProviderId): Provider | undefined =>
 	builtinProviders().find((candidate) => candidate.id === provider);
 
-export async function startupProviders(agentDir: string, ids: readonly ProviderId[]) {
-	if (ids.length === 0) return;
+export async function startupProviders(agentDir: string) {
 	return ModelRuntime.create({
 		credentials: new InMemoryCredentialStore(),
 		modelsPath: join(agentDir, "models.json"),
-		modelsStorePath: join(agentDir, "models-store.json"),
 		allowModelNetwork: false,
 	}).catch(() => undefined);
 }

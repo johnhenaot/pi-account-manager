@@ -101,10 +101,7 @@ export default async function (pi: ExtensionAPI) {
 		loadError = `Named accounts are unavailable: ${errorMessage(error)}`;
 	}
 
-	const cliModelCatalog = await startupProviders(
-		agentDir,
-		snapshot.map(({ provider }) => provider),
-	);
+	const cliModelCatalog = snapshot.length > 0 ? await startupProviders(agentDir) : undefined;
 	registerAccountAliases(({ provider }) => cliModelCatalog?.getProvider(provider) ?? bundledProvider(provider));
 
 	const isOwnAnthropicAlias = (providerId: string | undefined): boolean =>

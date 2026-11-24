@@ -82,7 +82,6 @@ Names can use 1 to 32 characters: lowercase letters, digits, `_` and `-`, starti
 ## Good to know
 
 - **Anthropic billing:** the first time in a pi run that you use an `anthropic@<name>` account, pi warns that third-party usage is billed per token as extra usage, not against your Claude plan limits. To turn the warning off, set `{ "warnings": { "anthropicExtraUsage": false } }` in `/settings`.
-- **Message threads:** Anthropic accounts use pi's message threads, kept separately for each account.
 - **`models.json`:** named accounts follow the built-in provider's settings there, including any `headers`. An `Authorization` header there replaces the account's own login.
 - **Where accounts live:** account names are kept in `~/.pi/agent/pi-account-manager/accounts.json`. Logins stay in pi's own `auth.json`, like any other provider.
 

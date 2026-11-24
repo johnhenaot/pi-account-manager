@@ -500,6 +500,21 @@ describe("anthropic extra-usage warning", () => {
 		expect(pi.last()).toEqual({ message: ANTHROPIC_EXTRA_USAGE_WARNING, type: "warning" });
 	});
 
+	it("stays quiet on restore when the model moves to another provider while the registry refreshes", async () => {
+		await writeStateFile(agentDir, { version: 1, accounts: [work] });
+		const pi = await start();
+		await pi.credentials.modify("anthropic@work", async () => oauthCredential());
+		await pi.runtime.refresh({ allowNetwork: false });
+
+		pi.setModel(modelOf(pi, "anthropic@work"));
+		vi.spyOn(pi.registry, "refresh").mockImplementation(() => {
+			pi.setModel(modelOf(pi, "openai"));
+			return Promise.resolve(undefined as never);
+		});
+		await pi.emit("session_start", { type: "session_start", reason: "resume" });
+		expect(pi.notifications).toHaveLength(0);
+	});
+
 	it("stays quiet on restore for an unauthenticated or native model", async () => {
 		await writeStateFile(agentDir, { version: 1, accounts: [work] });
 		const pi = await start();

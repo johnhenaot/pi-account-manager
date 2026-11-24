@@ -129,10 +129,9 @@ export default async function (pi: ExtensionAPI) {
 		// Registers through pi, not ctx.modelRegistry: only pi's path refreshes the session's live model.
 		registerAccountAliases(({ provider }) => ctx.modelRegistry.getProvider(provider));
 
-		const restoredModelProvider = ctx.model?.provider;
-		if (isOwnAnthropicAlias(restoredModelProvider)) {
+		if (isOwnAnthropicAlias(ctx.model?.provider)) {
 			await ctx.modelRegistry.refresh().catch(() => {});
-			maybeWarnAnthropic(ctx, restoredModelProvider);
+			maybeWarnAnthropic(ctx, ctx.model?.provider);
 		}
 	});
 

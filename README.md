@@ -85,14 +85,6 @@ Names can use 1 to 32 characters: lowercase letters, digits, `_` and `-`, starti
 - **`models.json`:** named accounts follow the built-in provider's settings there, including any `headers`. An `Authorization` header there replaces the account's own login.
 - **Where accounts live:** account names are kept in `~/.pi/agent/pi-account-manager/accounts.json`. Logins stay in pi's own `auth.json`, like any other provider.
 
-## Development
-
-```bash
-npm ci
-npm run check    # lint, type check and tests
-npm run format   # fix formatting and imports
-```
-
 ## License
 
 MIT

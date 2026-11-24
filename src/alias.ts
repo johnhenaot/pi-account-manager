@@ -54,8 +54,6 @@ export function buildAlias(base: Provider | undefined, account: Account): Provid
 		};
 
 	const streamRequest = <T extends StreamOptions | undefined>(model: Model<Api>, options: T) => {
-		// Keeps each account's thread and fallback state apart. Shortcut: Pi's session cleanup misses
-		// these scoped ids; Pi's 10k caps bound them. Track the ids if that ever matters.
 		if (account.provider === "anthropic" && model.api === "anthropic-messages" && options?.sessionId) {
 			options = { ...options, sessionId: `${options.sessionId}:${id}` };
 		}

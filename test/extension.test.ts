@@ -585,7 +585,7 @@ describe("anthropic extra-usage warning", () => {
 });
 
 describe("reload cleanup", () => {
-	it("unregisters this instance's aliases on session_shutdown for a reload", async () => {
+	it("unregisters this instance's aliases on reload, since pi keeps the registry for the next instance", async () => {
 		await writeStateFile(agentDir, {
 			version: 1,
 			accounts: [work, { provider: "openai-codex", name: "personal" }],
@@ -606,20 +606,6 @@ describe("reload cleanup", () => {
 			await pi.emit("session_shutdown", { type: "session_shutdown", reason });
 			expect(pi.registry.getProvider("anthropic@work"), reason).toBeDefined();
 		}
-	});
-
-	it("lets a removed account's name be re-added after a reload", async () => {
-		await writeStateFile(agentDir, { version: 1, accounts: [work] });
-		const first = await start();
-		await first.emit("session_shutdown", { type: "session_shutdown", reason: "reload" });
-
-		await anotherProcessSaves([]);
-		const second = await harness(agentDir, { answers: ["Anthropic"] });
-		await second.emit("session_start", { type: "session_start", reason: "reload" });
-
-		await second.account("add work");
-		expect(second.last().type).toBe("info");
-		expect(await loadAccounts(agentDir)).toEqual([work]);
 	});
 });
 

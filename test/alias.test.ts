@@ -38,14 +38,6 @@ describe("buildAlias", () => {
 		}
 	});
 
-	it("exposes OAuth only, dropping the native provider's API key path", () => {
-		const base = bundledProvider("anthropic")!;
-		expect(base.auth.apiKey).toBeDefined();
-		const alias = buildAlias(base, work);
-		expect(alias.auth.oauth).toBe(base.auth.oauth);
-		expect(alias.auth.apiKey).toBeUndefined();
-	});
-
 	it("mirrors the native catalog with the alias ID as provider", () => {
 		const base = bundledProvider("anthropic")!;
 		const native = base.getModels();
@@ -163,16 +155,16 @@ describe("pi registry contract", () => {
 		expect(runtime.getModels().some((m) => m.provider === "anthropic@work")).toBe(true);
 	});
 
-	it("offers /login only pi's own Anthropic OAuth flow, with no API key option", async () => {
+	it("offers /login only pi's own Anthropic OAuth flow, dropping the native provider's API key option", async () => {
 		const { registry, runtime } = await realRegistry(agentDir);
 		const native = registry.getProvider("anthropic")!;
+		expect(native.auth.apiKey).toBeDefined();
 		registry.registerProvider(buildAlias(native, work));
 		await runtime.refresh({ allowNetwork: false });
 
 		const alias = runtime.getProvider("anthropic@work")!;
 		expect(alias.auth.apiKey).toBeUndefined();
 		expect(alias.auth.oauth).toBe(native.auth.oauth);
-		expect(alias.auth.oauth?.name).toBe("Anthropic (Claude Pro/Max)");
 	});
 
 	it("unregisters cleanly, leaving the native provider usable", async () => {

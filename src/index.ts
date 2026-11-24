@@ -16,7 +16,7 @@ import {
 	PROVIDERS,
 	sortAccounts,
 } from "./account.ts";
-import { buildAlias, bundledProvider } from "./alias.ts";
+import { buildAlias, bundledProvider, startupProviders } from "./alias.ts";
 import { loadAccounts, saveAccounts } from "./state.ts";
 
 export const ANTHROPIC_EXTRA_USAGE_WARNING =
@@ -90,7 +90,7 @@ export default async function (pi: ExtensionAPI) {
 	let snapshot: Account[] = [];
 	let loadError: string | undefined;
 
-	const registerAll = (base: (account: Account) => Parameters<typeof buildAlias>[0]) => {
+	const registerAccountAliases = (base: (account: Account) => Parameters<typeof buildAlias>[0]) => {
 		try {
 			for (const account of snapshot) pi.registerProvider(buildAlias(base(account), account));
 		} catch (error) {
@@ -100,13 +100,17 @@ export default async function (pi: ExtensionAPI) {
 		}
 	};
 
-	// Registered at load so startup model selection and `pi --list-models` see the aliases.
 	try {
 		snapshot = await loadAccounts(agentDir);
 	} catch (error) {
 		loadError = `Named accounts are unavailable: ${errorMessage(error)}`;
 	}
-	registerAll((account) => bundledProvider(account.provider));
+
+	const cliModelCatalog = await startupProviders(
+		agentDir,
+		snapshot.map(({ provider }) => provider),
+	);
+	registerAccountAliases(({ provider }) => cliModelCatalog?.getProvider(provider) ?? bundledProvider(provider));
 
 	const isOwnAnthropicAlias = (providerId: string | undefined): boolean =>
 		snapshot.some((account) => account.provider === "anthropic" && accountId(account) === providerId);
@@ -130,7 +134,7 @@ export default async function (pi: ExtensionAPI) {
 
 		// Rebuilt against the effective registry, which includes any models.json overlay. Through
 		// `pi` rather than ctx.modelRegistry, because only that path refreshes the live model.
-		registerAll((account) => ctx.modelRegistry.getProvider(account.provider));
+		registerAccountAliases(({ provider }) => ctx.modelRegistry.getProvider(provider));
 
 		// A restored session assigns its model directly, emitting no model_select.
 		if (isOwnAnthropicAlias(ctx.model?.provider)) {

@@ -1,9 +1,26 @@
-import type { Api, Model, Provider, StreamOptions } from "@earendil-works/pi-ai";
+import { join } from "node:path";
+import {
+	type Api,
+	InMemoryCredentialStore,
+	type Model,
+	type Provider,
+	type StreamOptions,
+} from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { type Account, accountId, PROVIDERS, type ProviderId } from "./account.ts";
 
 export const bundledProvider = (provider: ProviderId): Provider | undefined =>
 	builtinProviders().find((candidate) => candidate.id === provider);
+
+// Pi's own offline load: models.json plus the models-store.json cache beside it, no network.
+export async function startupProviders(agentDir: string, ids: readonly ProviderId[]) {
+	if (ids.length === 0) return;
+	return ModelRuntime.create({
+		credentials: new InMemoryCredentialStore(),
+		modelsPath: join(agentDir, "models.json"),
+	}).catch(() => undefined);
+}
 
 export function buildAlias(base: Provider | undefined, account: Account): Provider {
 	const id = accountId(account);

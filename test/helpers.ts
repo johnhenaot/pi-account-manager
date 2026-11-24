@@ -53,11 +53,11 @@ export function memoryCredentials(): CredentialStore & { entries: Map<string, Cr
 	};
 }
 
-export async function realRegistry(agentDir: string) {
+export async function realRegistry(agentDir: string, modelsPath: string | null = null) {
 	const credentials = memoryCredentials();
 	const runtime = await ModelRuntime.create({
 		credentials,
-		modelsPath: null,
+		modelsPath,
 		modelsStorePath: join(agentDir, "models-store.json"),
 		allowModelNetwork: false,
 	});
@@ -156,6 +156,7 @@ export interface HarnessOptions {
 	editorText?: string;
 	answers?: (string | undefined)[];
 	rejectProviderId?: string;
+	extension?: typeof createAccountManager;
 }
 
 export async function harness(agentDir: string, options: HarnessOptions = {}) {
@@ -174,29 +175,13 @@ export async function harness(agentDir: string, options: HarnessOptions = {}) {
 		},
 	};
 
-	// A gate in front of the real registry, so a registration can be made to fail on either
-	// the bootstrap path (pi) or the session_start path (ctx.modelRegistry).
 	let rejectProviderId = options.rejectProviderId;
-	const guardedRegistry = new Proxy(registry, {
-		get(target, property) {
-			if (property === "registerProvider") {
-				return (provider: Provider | string, config?: unknown) => {
-					if (typeof provider !== "string" && provider.id === rejectProviderId) {
-						throw new Error(`rejected ${provider.id}`);
-					}
-					(registry.registerProvider as (a: unknown, b?: unknown) => void)(provider, config);
-				};
-			}
-			const value = Reflect.get(target, property, target);
-			return typeof value === "function" ? value.bind(target) : value;
-		},
-	});
 
 	const ctx = {
 		ui,
 		mode: "tui" as string,
 		cwd: agentDir,
-		modelRegistry: guardedRegistry,
+		modelRegistry: registry,
 		model: undefined as Model<Api> | undefined,
 		isProjectTrusted: () => true,
 	};
@@ -211,7 +196,8 @@ export async function harness(agentDir: string, options: HarnessOptions = {}) {
 			command = registration.handler;
 		},
 		registerProvider: (provider: Provider) => {
-			guardedRegistry.registerProvider(provider);
+			if (provider.id === rejectProviderId) throw new Error(`rejected ${provider.id}`);
+			registry.registerProvider(provider);
 			providers.set(provider.id, provider);
 		},
 		unregisterProvider: (id: string) => {
@@ -220,7 +206,7 @@ export async function harness(agentDir: string, options: HarnessOptions = {}) {
 		},
 	};
 
-	await createAccountManager(pi as never);
+	await (options.extension ?? createAccountManager)(pi as never);
 
 	return {
 		credentials,

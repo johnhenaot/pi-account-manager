@@ -17,7 +17,6 @@ let agentDir: string;
 
 beforeEach(async () => {
 	agentDir = await makeAgentDir();
-	// Every allowed HTTP request in this file must use its explicitly injected stub.
 	vi.stubGlobal(
 		"fetch",
 		vi.fn(async () => {
@@ -136,7 +135,7 @@ describe("OpenAI alias transport", () => {
 				},
 			);
 
-			it("calls a mutating hook after omissions and preserves its undefined return", async () => {
+			it("lets a mutating hook override the omissions, as native pi does, keeping its undefined return", async () => {
 				const { alias, model } = fixture();
 				const { fetch, requests } = captureRequests();
 				const onPayload = vi.fn((payload: unknown, requestModel: Model<Api>) => {
@@ -144,7 +143,6 @@ describe("OpenAI alias transport", () => {
 					expect(requestModel.provider).toBe(alias.id);
 					const params = payload as Record<string, unknown>;
 					params.metadata = { source: "fake-hook-mutation" };
-					// Native Pi also lets an explicit caller hook override the omission.
 					params.temperature = 0.7;
 				});
 				const options = { ...requestOptions(fetch), onPayload };
@@ -183,12 +181,12 @@ describe("OpenAI alias transport", () => {
 					const delegate = vi.spyOn(base, method);
 					const alias = buildAlias(base, { provider: "openai", name: "work" });
 					const { fetch, requests } = captureRequests();
-					// Newer catalogs enable the flag; the alias must override it, not just fill it in.
-					const effortModel = { ...model, compat: { ...model.compat, supportsMidConvoEffort: true } };
+					const effortEnabledByCatalog = { ...model, compat: { ...model.compat, supportsMidConvoEffort: true } };
 					const requestModel =
-						kind === "custom endpoint" ? { ...effortModel, baseUrl: "https://fake-openai.example/v1" } : effortModel;
+						kind === "custom endpoint"
+							? { ...effortEnabledByCatalog, baseUrl: "https://fake-openai.example/v1" }
+							: effortEnabledByCatalog;
 					const snapshot = structuredClone(requestModel);
-					// stream() reads reasoningEffort; only streamSimple() maps reasoning onto it.
 					const effort = method === "stream" ? { reasoningEffort: "high" as const } : { reasoning: "high" as const };
 					const options = {
 						...requestOptions(fetch),

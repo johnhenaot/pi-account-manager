@@ -2,12 +2,16 @@ import { describe, expect, it } from "vitest";
 import { type Account, accountId, isProviderId, isValidName, normalizeName, sortAccounts } from "../src/account.ts";
 
 describe("names", () => {
-	it("normalizes with trim then ASCII lowercasing only", () => {
+	it("normalizes with trim then ASCII lowercasing", () => {
 		expect(normalizeName("  Work  ")).toBe("work");
 		expect(normalizeName("WORK_1-a")).toBe("work_1-a");
-		// Non-ASCII uppercase is left alone, so it fails validation rather than folding.
-		expect(normalizeName("İstanbul")).toBe("İstanbul");
-		expect(isValidName(normalizeName("İstanbul"))).toBe(false);
+	});
+
+	it("leaves non-ASCII uppercase alone, so a lookalike fails validation instead of folding into an ASCII name", () => {
+		const kelvinSign = "\u212A";
+		expect(kelvinSign.toLowerCase()).toBe("k");
+		expect(normalizeName(`${kelvinSign}ate`)).toBe(`${kelvinSign}ate`);
+		expect(isValidName(normalizeName(`${kelvinSign}ate`))).toBe(false);
 	});
 
 	it("validates against the documented pattern", () => {
@@ -53,6 +57,14 @@ describe("ordering", () => {
 			"openai@work",
 			"openai-codex@personal",
 		]);
+	});
+
+	it("orders names by code unit rather than by locale, so the saved order is the same on every platform", () => {
+		const hyphenBeforeUnderscore: Account[] = [
+			{ provider: "anthropic", name: "a_b" },
+			{ provider: "anthropic", name: "a-b" },
+		];
+		expect(sortAccounts(hyphenBeforeUnderscore).map(accountId)).toEqual(["anthropic@a-b", "anthropic@a_b"]);
 	});
 
 	it("does not mutate its input", () => {

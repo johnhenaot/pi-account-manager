@@ -13,12 +13,13 @@ import { type Account, accountId, PROVIDERS, type ProviderId } from "./account.t
 export const bundledProvider = (provider: ProviderId): Provider | undefined =>
 	builtinProviders().find((candidate) => candidate.id === provider);
 
-// Pi's own offline load: models.json plus the models-store.json cache beside it, no network.
 export async function startupProviders(agentDir: string, ids: readonly ProviderId[]) {
 	if (ids.length === 0) return;
 	return ModelRuntime.create({
 		credentials: new InMemoryCredentialStore(),
 		modelsPath: join(agentDir, "models.json"),
+		modelsStorePath: join(agentDir, "models-store.json"),
+		allowModelNetwork: false,
 	}).catch(() => undefined);
 }
 
@@ -70,9 +71,6 @@ export function buildAlias(base: Provider | undefined, account: Account): Provid
 		name: `${PROVIDERS[account.provider]} (${account.name})`,
 		baseUrl: base.baseUrl,
 		headers: base.headers,
-		// Omitting `apiKey` is the isolation: the alias can only reach its own OAuth token,
-		// never the native key or an ambient credential. Exception (documented in the README):
-		// headers that models.json attaches to the native provider's OAuth still apply.
 		auth: { oauth },
 		getModels: () => reprovision(base.getModels(), id),
 		filterModels:
@@ -81,8 +79,6 @@ export function buildAlias(base: Provider | undefined, account: Account): Provid
 				const kept = new Set(base.filterModels!(reprovision(models, base.id), credential).map((model) => model.id));
 				return models.filter((model) => kept.has(model.id));
 			}),
-		// The model keeps `provider: <alias id>`, which is what makes pi attribute every stream
-		// event, message, and session entry to this account.
 		stream: (model, context, options) => {
 			const request = streamRequest(model, options);
 			return base.stream(request.model, context, request.options);
